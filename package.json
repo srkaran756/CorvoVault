@@ -1,0 +1,106 @@
+{
+  "name": "corvovault",
+  "version": "1.0.0",
+  "description": "A focused study sanctuary — organize research, files, links, and YouTube videos in one desktop app with a built-in browser.",
+  "author": "CorvoVault Contributors",
+  "license": "Apache-2.0",
+  "private": true,
+  "main": "dist-electron/electron/main.js",
+  "scripts": {
+    "dev": "vite --port=3000 --host=127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:rebuild": "npm rebuild better-sqlite3 && vitest run",
+    "postinstall": "electron-rebuild -f -o better-sqlite3,keytar,sqlite-vec && node scripts/copy-pdfjs-worker.js",
+    "electron:rebuild": "electron-rebuild -f -o better-sqlite3,keytar,sqlite-vec",
+    "electron:dev": "concurrently -k \"vite --port=3000 --host=127.0.0.1\" \"wait-on http://127.0.0.1:3000 && tsc -p electron/tsconfig.json && electron-rebuild -o better-sqlite3,keytar,sqlite-vec && electron .\"",
+    "electron:build": "vite build && tsc -p electron/tsconfig.json && electron-builder",
+    "electron:start": "tsc -p electron/tsconfig.json && electron-rebuild -o better-sqlite3,keytar,sqlite-vec && electron ."
+  },
+  "dependencies": {
+    "@google/genai": "^1.29.0",
+    "@langchain/textsplitters": "^1.0.1",
+    "@supabase/supabase-js": "^2.103.0",
+    "@xenova/transformers": "^2.17.2",
+    "archiver": "^7.0.1",
+    "better-sqlite3": "^12.9.0",
+    "check-disk-space": "^3.4.0",
+    "electron-updater": "^6.8.3",
+    "fuse.js": "^7.4.2",
+    "keytar": "^7.9.0",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "pdf-parse": "^2.4.5",
+    "pdfjs-dist": "^4.10.38",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^3.8.1",
+    "sqlite-vec": "^0.1.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.1",
+    "@tailwindcss/vite": "^4.1.14",
+    "@testing-library/react": "^16.3.2",
+    "@types/archiver": "^7.0.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/keytar": "^4.4.0",
+    "@types/node": "^22.14.0",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.4",
+    "autoprefixer": "^10.4.21",
+    "concurrently": "^9.1.2",
+    "electron": "^35.2.1",
+    "electron-builder": "^26.0.12",
+    "happy-dom": "^20.9.0",
+    "tailwindcss": "^4.1.14",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0",
+    "vitest": "^4.1.6",
+    "wait-on": "^9.0.10"
+  },
+  "build": {
+    "appId": "com.corvovault.app",
+    "productName": "CorvoVault",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/pandoc",
+        "to": "pandoc",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/icon.ico"
+    },
+    "mac": {
+      "icon": "public/icon.icns"
+    },
+    "linux": {
+      "icon": "public/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "srkaran756",
+      "repo": "corvovault"
+    }
+  }
+}

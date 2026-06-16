@@ -1,0 +1,102 @@
+# CorvoVault
+
+A local-first desktop application for organizing study materials. Built with Electron, React, and TypeScript. All data stays on the user's machine.
+
+## What it does
+
+- Organize PDFs, DOCX files, videos, links, and YouTube videos into a topic → folder → material hierarchy
+- Read PDFs in a custom built-in viewer with text selection, highlighting, freehand drawing, zoom, rotation, and reading filters
+- Preview DOCX/ODT/RTF files inline (converted via bundled Pandoc to PDF)
+- Take and save notes per material with a rich text editor
+- Track YouTube video watch progress
+- Browse the web inside the app in an isolated session
+- Search the web for PDFs and download them directly into the vault
+- Chat with an AI tutor about the document you are reading (requires your own API key)
+- View a study dashboard with time-tracked activity, heatmap, and usage stats
+- Multiple local profiles on one installation, each with its own vault, settings, and theme
+
+## Tech stack
+
+- Electron 35 (main + preload processes)
+- React 19 + Vite 6 (renderer)
+- TypeScript 5.8
+- SQLite via `better-sqlite3` (WAL mode)
+- Tailwind CSS 4
+- `@xenova/transformers` — ONNX runtime for local embedding generation (no GPU required)
+
+## Getting started (development)
+
+**Prerequisites**
+
+- Windows 10 or later
+- Node.js 18 or later
+- `pandoc.exe` present in `resources/pandoc/` (required for DOCX preview)
+
+**Install dependencies**
+
+```bash
+npm install
+```
+
+The `postinstall` script rebuilds native modules (`better-sqlite3`, `keytar`) against Electron automatically. If it fails, run:
+
+```bash
+npm run electron:rebuild
+```
+
+**Start the development environment**
+
+```bash
+npm run electron:dev
+```
+
+This starts both the Vite dev server (at `http://127.0.0.1:3000`) and Electron concurrently.
+
+**Run unit tests**
+
+```bash
+npm test
+```
+
+## Build and package
+
+```bash
+npm run electron:build
+```
+
+Output is written to `release/`. The app packages as an NSIS installer for Windows.
+
+## Repository layout
+
+```
+corvovault/
+├── electron/     # Main process: IPC handlers, services, repositories, DB
+├── src/          # Renderer: React components, hooks, contexts, lib
+├── shared/       # IPC envelope types shared between main and renderer
+├── docs/         # Engineering documentation
+└── resources/    # Bundled binaries (pandoc.exe)
+```
+
+See [`ENGINEERING.md`](ENGINEERING.md) for architecture, subsystem details, and known issues. For customizing colors and the user interface, see [`docs/THEME_DESIGN_GUIDE.md`](docs/THEME_DESIGN_GUIDE.md).
+
+## Database
+
+Migration scripts run automatically on startup. The migration runner (`electron/db/migrate.ts`) embeds SQL inline — the `.sql` files in `electron/db/migrations/` are reference copies, not what the runner executes.
+
+## Contributing
+
+- Open issues for bugs or feature requests.
+- Follow existing patterns when adding services or IPC handlers.
+- Run migrations after any schema change.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| `NODE_MODULE_VERSION mismatch` on startup | Native modules built against wrong Node ABI | Run `npm run electron:rebuild` |
+| Blank renderer screen | Vite server not running | Use `npm run electron:dev`, not `electron:start` alone |
+| DOCX preview fails | `pandoc.exe` missing | Confirm `resources/pandoc/pandoc.exe` exists |
+
+## License
+
+See [`LICENSE`](LICENSE) in the repository root.

@@ -1,0 +1,32 @@
+node_modules/
+build/
+dist/
+dist-electron/
+release/
+coverage/
+.DS_Store
+*.log
+.env
+.env.local
+.env.production
+!.env.example
+userData/
+.aider*
+
+# Local SQLite databases and data files
+crowvault.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Scratch and local test scripts/outputs
+scratch/
+test_db.js
+test_output.html
+test_output2.html
+
+# Local AI assistant directory
+.continue/
+
+# Large third-party executable binaries
+resources/pandoc/pandoc.exe

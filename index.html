@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="CorvoVault — A focused study sanctuary to organize research, files, links, and YouTube videos with a built-in browser." />
+    <!--
+      Content Security Policy:
+      - default-src 'self'       — only same-origin resources by default
+      - script-src 'self'        — no inline scripts, no eval
+      - style-src 'self' 'unsafe-inline' — Tailwind injects inline styles at runtime
+      - img-src 'self' corvovault-file: data: https: — local files + remote thumbnails
+      - connect-src 'self' https: — fetch() to external APIs (YouTube oEmbed, etc.)
+      - media-src 'self' corvovault-file: https: — PDF/video playback from local + remote
+      - object-src 'none'        — no plugins (Flash, etc.)
+      - base-uri 'self'          — prevent base-tag hijacking
+      - frame-ancestors 'none'   — prevent clickjacking
+    -->
+    <meta http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self' corvovault-file:;
+        script-src 'self' 'unsafe-eval' https://www.youtube.com https://s.ytimg.com https://*.youtube.com https://*.ytimg.com;
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' corvovault-file: data: https:;
+        connect-src 'self' https:;
+        media-src 'self' corvovault-file: https:;
+        frame-src 'self' https://www.youtube.com https://*.youtube.com;
+        object-src 'none';
+        base-uri 'self';
+        frame-ancestors 'none';
+      " />
+    <title>CorvoVault</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
