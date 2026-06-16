@@ -2,6 +2,15 @@
 
 A local-first desktop application for organizing study materials. Built with Electron, React, and TypeScript. All data stays on the user's machine.
 
+## Screenshots
+
+### Vault 
+![CorvoVault Vault ](docs/screenshots/vault.png)
+
+### PDF Reader & AI Assistant
+![CorvoVault PDF Reader Cover](docs/screenshots/pdf_reader_cover.png)
+![CorvoVault PDF Reader Highlight](docs/screenshots/pdf_reader_highlight.png)
+
 ## What it does
 
 - Organize PDFs, DOCX files, videos, links, and YouTube videos into a topic → folder → material hierarchy
@@ -82,6 +91,11 @@ See [`ENGINEERING.md`](ENGINEERING.md) for architecture, subsystem details, and 
 ## Database
 
 Migration scripts run automatically on startup. The migration runner (`electron/db/migrate.ts`) embeds SQL inline — the `.sql` files in `electron/db/migrations/` are reference copies, not what the runner executes.
+
+## Notes to Others
+
+- Ignore the dashboard for now, because I'm planning something different for that.
+- If you want to work as a team and improve this (not just fixing some bugs), you can personally email me at kshivamraj756@gmail.com or WhatsApp me at 7970704703.
 
 ## Contributing
 
