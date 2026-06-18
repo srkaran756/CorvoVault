@@ -1571,7 +1571,7 @@ function PdfPageItem({
     }
 
     ctx.globalCompositeOperation = 'source-over';
-  }, [highlightVersion, loading, customSelection, dimensions, highlights]);
+  }, [highlightVersion, loading, customSelection, dimensions, highlights, isIntersecting]);
 
   // Redraw strokes overlay
   useEffect(() => {
@@ -1629,7 +1629,7 @@ function PdfPageItem({
       ctx.stroke();
     });
     ctx.globalCompositeOperation = 'source-over';
-  }, [strokeVersion, loading]);
+  }, [strokeVersion, loading, isIntersecting]);
 
   // ── Canvas pointer coords (Pointer events for touch/pen support) ──────
   const getCoords = (e: React.PointerEvent<HTMLCanvasElement> | { clientX: number; clientY: number }) => {

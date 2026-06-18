@@ -20,6 +20,7 @@
     "electron:start": "tsc -p electron/tsconfig.json && electron-rebuild -o better-sqlite3,keytar,sqlite-vec && electron ."
   },
   "dependencies": {
+    "@ghostery/adblocker-electron": "^2.18.0",
     "@google/genai": "^1.29.0",
     "@langchain/core": "^1.1.49",
     "@langchain/textsplitters": "^1.0.1",

@@ -82,19 +82,27 @@ function computeLineGaps(items: ProcessedTextItem[]): number[] {
   const pageWidth = Math.max(...items.map(i => i.left + i.width), 100);
   const lineGaps: number[] = [];
 
-  for (let i = 0; i < items.length; i++) {
-    for (let j = i + 1; j < items.length; j++) {
-      const a = items[i];
-      const b = items[j];
-      const aCenterX = a.left + a.width / 2;
-      const bCenterX = b.left + b.width / 2;
-      const xCenterDiff = Math.abs(aCenterX - bCenterX);
+  // Sort by top coordinate to enable sliding vertical window
+  const sorted = [...items].sort((a, b) => a.top - b.top);
 
-      // Only consider items in same general column (within 40% of page width)
-      if (xCenterDiff < pageWidth * 0.4) {
-        const yDiff = Math.abs(a.top - b.top);
-        if (yDiff > 0 && yDiff < medFontHeight * 3.0) {
-          // Exclude huge gaps; these aren't "same line" using vertical threshold
+  for (let i = 0; i < sorted.length; i++) {
+    const a = sorted[i];
+    for (let j = i + 1; j < sorted.length; j++) {
+      const b = sorted[j];
+      const yDiff = b.top - a.top;
+
+      // Break early since sorted by top: no subsequent items can be within medFontHeight * 3.0
+      if (yDiff >= medFontHeight * 3.0) {
+        break;
+      }
+
+      if (yDiff > 0) {
+        const aCenterX = a.left + a.width / 2;
+        const bCenterX = b.left + b.width / 2;
+        const xCenterDiff = Math.abs(aCenterX - bCenterX);
+
+        // Only consider items in same general column (within 40% of page width)
+        if (xCenterDiff < pageWidth * 0.4) {
           lineGaps.push(yDiff);
         }
       }
@@ -312,16 +320,29 @@ function computePageProfile(
       // inline code or diagrams, items on the left and right of the page center are close
       // and represent split sentences.
       let smallGapSplits = 0;
-      for (let i = 0; i < items.length; i++) {
-        for (let j = 0; j < items.length; j++) {
-          const a = items[i];
-          const b = items[j];
-          if (a.left + a.width < gutterX! && b.left >= gutterX!) {
-            const yDiff = Math.abs(a.top - b.top);
-            const xGap = b.left - (a.left + a.width);
-            if (yDiff <= medianFontHeight * 0.4 && xGap > 0 && xGap <= medianFontHeight * 3.0) {
-              smallGapSplits++;
-            }
+      const leftSplitItems = items.filter(item => item.left + item.width < gutterX!);
+      const rightSplitItems = items.filter(item => item.left >= gutterX!);
+      
+      const sortedLeft = [...leftSplitItems].sort((a, b) => a.top - b.top);
+      const sortedRight = [...rightSplitItems].sort((a, b) => a.top - b.top);
+
+      let rightIdx = 0;
+      for (const a of sortedLeft) {
+        // Advance rightIdx until the right item's top is at least a.top - threshold
+        while (rightIdx < sortedRight.length && sortedRight[rightIdx].top < a.top - medianFontHeight * 0.4) {
+          rightIdx++;
+        }
+
+        // Scan subsequent right items that fall within the vertical window
+        for (let k = rightIdx; k < sortedRight.length; k++) {
+          const b = sortedRight[k];
+          if (b.top - a.top > medianFontHeight * 0.4) {
+            break; // Since sortedRight is sorted by top, no further elements can fall in the vertical window
+          }
+
+          const xGap = b.left - (a.left + a.width);
+          if (xGap > 0 && xGap <= medianFontHeight * 3.0) {
+            smallGapSplits++;
           }
         }
       }

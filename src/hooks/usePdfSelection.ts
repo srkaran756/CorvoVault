@@ -91,6 +91,7 @@ export function usePdfSelection({
           callout: h.callout || null,
           source: h.source || 'user',
           created_at: new Date(h.createdAt).getTime() || Date.now(),
+          stroke_data: h.rects ? JSON.stringify(h.rects) : null,
         });
       }
     } else {
@@ -106,16 +107,26 @@ export function usePdfSelection({
         // Filter out stroke annotations from highlightsRef
         const dbHighlights = (dbAnnotations || []).filter((a: any) => a.type !== 'stroke');
         if (dbHighlights && dbHighlights.length > 0) {
-          highlightsRef.current = dbHighlights.map((a: any) => ({
-            id: a.annotation_id,
-            type: a.type || 'highlight',
-            color: a.color,
-            rects: [], // rects are computed at render time from target_text matching
-            text: a.target_text || '',
-            createdAt: new Date(a.created_at).toISOString(),
-            source: a.source,
-            callout: a.callout,
-          }));
+          highlightsRef.current = dbHighlights.map((a: any) => {
+            let rects = [];
+            if (a.stroke_data) {
+              try {
+                rects = JSON.parse(a.stroke_data);
+              } catch (e) {
+                rects = [];
+              }
+            }
+            return {
+              id: a.annotation_id,
+              type: a.type || 'highlight',
+              color: a.color,
+              rects,
+              text: a.target_text || '',
+              createdAt: new Date(a.created_at).toISOString(),
+              source: a.source,
+              callout: a.callout,
+            };
+          });
           // Clean up localStorage keys on successful DB load
           const raw = localStorage.getItem(`corvovault-pdf-text-highlights-${materialId}-${pageNum}`);
           if (raw) {
@@ -141,6 +152,7 @@ export function usePdfSelection({
                   callout: h.callout || null,
                   source: h.source || 'user',
                   created_at: new Date(h.createdAt).getTime() || Date.now(),
+                  stroke_data: h.rects ? JSON.stringify(h.rects) : null,
                 });
               }
               console.log(`[V3 Migration] Migrated ${parsed.length} highlights for page ${pageNum} to SQLite`);

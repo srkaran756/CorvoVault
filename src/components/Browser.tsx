@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Globe, ArrowLeft, ArrowRight, RotateCw, Plus, X, Search, Bookmark, BookmarkCheck, Shield, Loader2, ExternalLink, Trash2, Home, Settings, ZoomIn, ZoomOut, RefreshCw } from 'lucide-react';
+import { Globe, ArrowLeft, ArrowRight, RotateCw, Plus, X, Search, Bookmark, BookmarkCheck, Shield, Loader2, ExternalLink, Trash2, Home, Settings, ZoomIn, ZoomOut, RefreshCw, Moon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useMaterials, useTopics, useFolders, useBookmarks } from '../hooks/useLocalData';
 import { Screen } from '../types';
@@ -9,6 +9,9 @@ import { useActivityTimer } from '../hooks/useActivityTimer';
 const DEFAULT_HOME = 'https://www.google.com';
 const SEARCH_ENGINES: Record<string, string> = {
   Google: 'https://www.google.com/search?q=',
+  'Google Scholar': 'https://scholar.google.com/scholar?q=',
+  arXiv: 'https://arxiv.org/search/?query=',
+  PubMed: 'https://pubmed.ncbi.nlm.nih.gov/?term=',
   DuckDuckGo: 'https://duckduckgo.com/?q=',
   Bing: 'https://www.bing.com/search?q=',
 };
@@ -21,6 +24,8 @@ interface Tab {
   isLoading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
+  lastActiveTime: number;
+  isSleeping: boolean;
 }
 
 interface BrowserProps {
@@ -33,7 +38,7 @@ const isElectron = !!(window as any).electronAPI?.isElectron;
 
 export default function Browser({ initialUrl, onNavigate, isActive = true }: BrowserProps) {
   const [tabs, setTabs] = useState<Tab[]>([
-    { id: '1', title: 'New Tab', url: initialUrl || DEFAULT_HOME, initialUrl: initialUrl || DEFAULT_HOME, isLoading: false, canGoBack: false, canGoForward: false },
+    { id: '1', title: 'New Tab', url: initialUrl || DEFAULT_HOME, initialUrl: initialUrl || DEFAULT_HOME, isLoading: false, canGoBack: false, canGoForward: false, lastActiveTime: Date.now(), isSleeping: false },
   ]);
   const [activeTabId, setActiveTabId] = useState('1');
   const [urlInput, setUrlInput] = useState(initialUrl || DEFAULT_HOME);
@@ -50,7 +55,46 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
   // value without the useCallback needing activeTabId as a dependency (which would
   // recreate the callback — and re-attach listeners — on every tab switch).
   const activeTabIdRef = useRef(activeTabId);
-  useEffect(() => { activeTabIdRef.current = activeTabId; }, [activeTabId]);
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+    setTabs(prev => prev.map(t => {
+      if (t.id === activeTabId) {
+        if (t.isSleeping) {
+          // Wake up the tab: load the URL where it went to sleep
+          return { ...t, isSleeping: false, lastActiveTime: Date.now(), initialUrl: t.url, isLoading: true };
+        }
+        return { ...t, lastActiveTime: Date.now() };
+      }
+      return t;
+    }));
+  }, [activeTabId]);
+
+  // SLEEP_THRESHOLD set to 10 minutes for standard usage
+  const SLEEP_THRESHOLD = 10 * 60 * 1000;
+
+  useEffect(() => {
+    const checkInterval = setInterval(() => {
+      const now = Date.now();
+      const currentActiveId = activeTabIdRef.current;
+      setTabs(prev => {
+        let changed = false;
+        const nextTabs = prev.map(t => {
+          const isYouTube = t.url.includes('youtube.com') || t.url.includes('youtu.be');
+          const isInactiveLongEnough = (now - t.lastActiveTime) > SLEEP_THRESHOLD;
+          
+          if (t.id !== currentActiveId && !t.isSleeping && !isYouTube && isInactiveLongEnough) {
+            changed = true;
+            delete webviewRefs.current[t.id];
+            return { ...t, isSleeping: true, isLoading: false };
+          }
+          return t;
+        });
+        return changed ? nextTabs : prev;
+      });
+    }, 10000); // Check every 10 seconds
+
+    return () => clearInterval(checkInterval);
+  }, []);
 
   const { addMaterial } = useMaterials();
   const { topics } = useTopics();
@@ -88,7 +132,9 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
         initialUrl: initialUrl,
         isLoading: true, 
         canGoBack: false, 
-        canGoForward: false 
+        canGoForward: false,
+        lastActiveTime: Date.now(),
+        isSleeping: false
       };
       setTabs(prev => [...prev, newTab]);
       setActiveTabId(newTab.id);
@@ -166,6 +212,8 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
         isLoading: true,
         canGoBack: false,
         canGoForward: false,
+        lastActiveTime: Date.now(),
+        isSleeping: false
       };
       setTabs(prev => [...prev, newTab]);
       setActiveTabId(newTab.id);
@@ -208,7 +256,7 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
   }, []);
 
   const handleAddTab = () => {
-    const newTab: Tab = { id: crypto.randomUUID(), title: 'New Tab', url: homePage, initialUrl: homePage, isLoading: false, canGoBack: false, canGoForward: false };
+    const newTab: Tab = { id: crypto.randomUUID(), title: 'New Tab', url: homePage, initialUrl: homePage, isLoading: false, canGoBack: false, canGoForward: false, lastActiveTime: Date.now(), isSleeping: false };
     setTabs([...tabs, newTab]);
     setActiveTabId(newTab.id);
     setUrlInput(newTab.url);
@@ -499,7 +547,13 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
               ${activeTabId === tab.id ? 'bg-surface-container-lowest text-primary border-t border-x border-outline-variant/10' : 'text-on-surface-variant hover:bg-surface-container-high'}
             `}
           >
-            {tab.isLoading ? <Loader2 className="w-3 h-3 animate-spin shrink-0" /> : <Globe className="w-3 h-3 shrink-0" />}
+            {tab.isLoading ? (
+              <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+            ) : tab.isSleeping ? (
+              <Moon className="w-3 h-3 text-outline shrink-0" />
+            ) : (
+              <Globe className="w-3 h-3 shrink-0" />
+            )}
             <span className="truncate flex-1">{tab.title}</span>
             <button 
               onClick={(e) => handleCloseTab(tab.id, e)}
@@ -522,27 +576,37 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
             // Real Chromium webview in Electron with session partition
             tabs.map(tab => (
               <div key={tab.id} className={`absolute inset-0 ${activeTabId === tab.id ? '' : 'hidden'}`}>
-                    <webview
-                      ref={(el: any) => {
-                        if (el && !webviewRefs.current[tab.id]) {
-                          webviewRefs.current[tab.id] = el;
-                          setupWebviewListeners(el, tab.id);
-                        }
-                      }}
-                      src={tab.initialUrl}
-                      className="w-full h-full transition-opacity duration-300"
-                      // @ts-ignore
-                      partition="persist:browser"
-                      // Allow popups for known providers
-                      // @ts-ignore
-                      allowpopups={(tab.url?.includes('google.com') || tab.url?.includes('youtube.com') || tab.url?.includes('github.com')) ? 'true' : undefined}
-                      // For YouTube, enable autoplay + disable background throttling to avoid blank/black playback
-                      // @ts-ignore
-                      webpreferences={(tab.url?.includes('youtube.com') || tab.url?.includes('youtu.be')) ? 'autoplayPolicy=no-user-gesture-required, backgroundThrottling=false' : undefined}
-                      // Use a modern desktop UA for watch pages to avoid mobile/embedded fallbacks
-                      // @ts-ignore
-                      useragent={(tab.url?.includes('youtube.com') || tab.url?.includes('youtu.be')) ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' : undefined}
-                    />
+                {tab.isSleeping ? (
+                  <div className="w-full h-full flex flex-col items-center justify-center bg-surface-container-lowest text-outline space-y-4">
+                    <Moon className="w-12 h-12 opacity-30 animate-pulse text-primary" />
+                    <div className="text-center">
+                      <p className="text-sm font-bold text-on-surface">Tab is Sleeping</p>
+                      <p className="text-xs text-outline-variant">Click the tab or reload to wake it up and resume reading</p>
+                    </div>
+                  </div>
+                ) : (
+                  <webview
+                    ref={(el: any) => {
+                      if (el && !webviewRefs.current[tab.id]) {
+                        webviewRefs.current[tab.id] = el;
+                        setupWebviewListeners(el, tab.id);
+                      }
+                    }}
+                    src={tab.initialUrl}
+                    className="w-full h-full transition-opacity duration-300"
+                    // @ts-ignore
+                    partition="persist:browser"
+                    // Allow popups for known providers
+                    // @ts-ignore
+                    allowpopups={(tab.url?.includes('google.com') || tab.url?.includes('youtube.com') || tab.url?.includes('github.com')) ? 'true' : undefined}
+                    // For YouTube, enable autoplay + disable background throttling to avoid blank/black playback
+                    // @ts-ignore
+                    webpreferences={(tab.url?.includes('youtube.com') || tab.url?.includes('youtu.be')) ? 'autoplayPolicy=no-user-gesture-required, backgroundThrottling=false' : undefined}
+                    // Use a modern desktop UA for watch pages to avoid mobile/embedded fallbacks
+                    // @ts-ignore
+                    useragent={(tab.url?.includes('youtube.com') || tab.url?.includes('youtu.be')) ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' : undefined}
+                  />
+                )}
               </div>
             ))
           ) : (
