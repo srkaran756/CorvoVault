@@ -482,7 +482,7 @@ Migration list from `electron/db/migrate.ts`:
 
 Required Node.js version is not enforced in `package.json`. The README says Node.js 18 or later. The current dependency set uses Electron 35, Vite 6, React 19, and Node 22 type definitions, so use a current LTS Node if possible.
 
-This project is actively shaped around Windows. It includes `resources/pandoc/pandoc.exe`, `CorvoVault.vbs`, `start-agent.bat`, and a PowerShell kill script. Electron Builder has macOS and Linux icon settings, but there is no evidence in the repo that macOS or Linux builds are regularly tested.
+This project is actively shaped around Windows. It includes `resources/pandoc/pandoc.exe`, `CorvoVault.vbs`, and a PowerShell kill script. Electron Builder has macOS and Linux icon settings, but there is no evidence in the repo that macOS or Linux builds are regularly tested.
 
 ```bash
 # 1. Clone
@@ -764,7 +764,6 @@ Environment variables shown in `.env.example`:
 
 Other environment behavior:
 
-- `start-agent.bat` sets `OPENAI_API_KEY` from `NVIDIA_KEY` and sets `ANTHROPIC_API_KEY`. This appears to be for an external agent workflow, not CorvoVault runtime.
 - Runtime API keys for Gemini, OpenAI, Anthropic, and OpenRouter are stored through app settings/secrets, not required as environment variables.
 
 Configuration and data locations:
