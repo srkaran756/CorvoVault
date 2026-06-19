@@ -1,6 +1,9 @@
 # CorvoVault
 
-A local-first desktop application for organizing study materials. Built with Electron, React, and TypeScript. All data stays on the user's machine.
+**Your little learning partner. A home for curious minds.**
+
+CorvoVault is a local-first desktop application built to support the journey of learning. Instead of treating learning resources as isolated files, CorvoVault connects your PDFs, websites, YouTube videos, research papers, notes, and AI conversations into a single evolving knowledge space designed to help you move from curiosity to understanding. Built with Electron, React, and TypeScript, with all your data staying locally on your machine.
+
 
 ## Screenshots
 
@@ -86,7 +89,7 @@ corvovault/
 └── resources/    # Bundled binaries (pandoc.exe)
 ```
 
-See [`ENGINEERING.md`](ENGINEERING.md) for architecture, subsystem details, and known issues. For customizing colors and the user interface, see [`docs/THEME_DESIGN_GUIDE.md`](docs/THEME_DESIGN_GUIDE.md).
+See [`PROJECT_VISION.md`](PROJECT_VISION.md) for the philosophy, goals, and principles of the application. See [`ENGINEERING.md`](ENGINEERING.md) for architecture, subsystem details, and known issues. For customizing colors and the user interface, see [`docs/THEME_DESIGN_GUIDE.md`](docs/THEME_DESIGN_GUIDE.md).
 
 ## Database
 
