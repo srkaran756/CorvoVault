@@ -1,10 +1,12 @@
 import { ipcMain } from 'electron';
 import { ProfessorService } from '../services/professorService';
 import Database from 'better-sqlite3';
+import { IngestionQueue } from '../services/ingestionQueue';
 
 export function registerProfessorHandlers(
   db: Database.Database,
-  professorService: ProfessorService
+  professorService: ProfessorService,
+  ingestionQueue?: IngestionQueue
 ): void {
   ipcMain.handle('professor:getIngestionStatus', async (_event, materialId: string) => {
     return professorService.getIngestionStatus(materialId);
@@ -74,7 +76,15 @@ export function registerProfessorHandlers(
   // ─── Re-ingestion IPC ────────────────────────────────────────────────────
   ipcMain.handle('professor:clearIngestion', async (_event, materialId: string) => {
     professorService.clearIngestionForMaterial(materialId);
+    if (ingestionQueue) {
+      ingestionQueue.triggerProcessing();
+    }
     return { success: true };
+  });
+
+  // ─── Agentic Retrieval Tool IPC ──────────────────────────────────────────
+  ipcMain.handle('professor:runRetrievalTool', async (_event, materialId: string, toolName: string, args: any) => {
+    return await professorService.runRetrievalTool(materialId, toolName, args);
   });
 }
 

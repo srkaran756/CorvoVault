@@ -54,5 +54,41 @@ export class ServiceHost {
     
     this.professor = new ProfessorService(db, vectorRepo);
     this.ingestionQueue = new IngestionQueue(db, this.professor, getMainWindow);
+    this.cleanCorruptedIngestions(db);
+  }
+
+  private cleanCorruptedIngestions(db: Database.Database): void {
+    try {
+      const rows = db.prepare(
+        "SELECT material_id, index_json FROM concept_index WHERE status = 'ready'"
+      ).all() as Array<{ material_id: string; index_json: string }>;
+
+      const proseKeywords = /\b(will argue|described|pointed out|introduced|argued|discuss|deals with|shows|about|manifests)\b/i;
+
+      for (const row of rows) {
+        let isCorrupted = false;
+        try {
+          const parsed = JSON.parse(row.index_json);
+          if (parsed.topics && Array.isArray(parsed.topics)) {
+            for (const topic of parsed.topics) {
+              const name = topic.name || '';
+              if (name.length > 80 || proseKeywords.test(name)) {
+                isCorrupted = true;
+                break;
+              }
+            }
+          }
+        } catch {
+          isCorrupted = true;
+        }
+
+        if (isCorrupted) {
+          console.log(`[ServiceHost] Detected corrupted/noisy concept index for material ${row.material_id}. Clearing and queueing for re-ingestion.`);
+          this.professor.clearIngestionForMaterial(row.material_id);
+        }
+      }
+    } catch (err) {
+      console.warn('[ServiceHost] Failed to clean corrupted ingestions:', err);
+    }
   }
 }

@@ -1231,165 +1231,116 @@ This is clever because it reuses the PDF viewer. It is also fragile because it d
 - timeouts
 - cached preview files
 
-## How the AI Tutor and RAG Work
+### How the AI Tutor and RAG Work
 
-The AI feature has two major phases:
+> [!WARNING]
+> **EXPERIMENTAL & EXPLORATORY FEATURE**
+> The AI Tutor Study Assistant is a highly experimental exploration, not a production-grade subsystem. It contains significant rough edges:
+> - **Tool Call Failure / Non-Compliance**: Many LLM models (especially smaller or free models on OpenRouter) frequently ignore structured schemas or fail to execute tools in the middle of multi-turn loops.
+> - **Hallucination of Page Numbers**: If heading and chapter index mapping is polluted, the LLM will hallucinate page numbers and trigger incorrect auto-navigation (jumping the user to wrong chapters/pages).
+> - **Context Window & Cost Math**: The hybrid BM25 and vector search splits files into 512-character chunks. While this keeps embeddings highly localized and cost-effective, complex queries that span multiple distant pages can flood the model's context or lead to fragmented replies.
+> - **Parsing Fallback Brittle Workaround**: If the model fails to return JSON or call the required `professor_response` tool, the system falls back to wrapping its raw text in a speech envelope. This prevents UI crashes but drops advanced features (such as PDF highlights and board drawings).
 
-1. Ingestion: prepare the document for search.
-2. Chat: retrieve relevant chunks and ask an LLM to answer.
+The AI Tutor subsystem is split into four distinct architectural phases:
 
-### Phase 1: Ingestion
+1. **Ingestion & Embedding Pipeline**: Parse files locally and build a vector database index.
+2. **Intent Classification & Hybrid Retrieval**: Analyze the student's question and pull relevant document chunks.
+3. **Agentic Tool loop**: Run an iterative research cycle where the LLM can navigate, list topics, and read page text.
+4. **Structured JSON Output & Visual Synchronization**: Render speech, apply highlights, draw blackboard actions, and auto-navigate the viewer.
 
-Ingestion happens in the Electron main process.
+---
 
-Important files:
+### Phase 1: Ingestion & Bounding-Box Indexing
 
-- `electron/services/ingestionQueue.ts`
-- `electron/services/embeddingService.ts`
-- `electron/services/professorService.ts`
-- `electron/repositories/sqlite/SqliteVectorRepository.ts`
-- `electron/services/tocDetector.ts`
+Ingestion runs as a background queue task in the Electron main process to ensure UI responsiveness.
+
+**Important Files:**
+- [ingestionQueue.ts](file:///f:/SIC%20v4/CorvoVault/electron/services/ingestionQueue.ts)
+- [embeddingService.ts](file:///f:/SIC%20v4/CorvoVault/electron/services/embeddingService.ts)
+- [tocDetector.ts](file:///f:/SIC%20v4/CorvoVault/electron/services/tocDetector.ts)
+- [SqliteVectorRepository.ts](file:///f:/SIC%20v4/CorvoVault/electron/repositories/sqlite/SqliteVectorRepository.ts)
 
 When a PDF is imported:
-
 ```text
-vault:capture creates a material row
-  -> vaultHandlers sees it is a PDF
-  -> ingestionQueue.enqueue(material.id, material.localPath)
-  -> ingestion_queue row is created
-  -> concept_index status becomes queued
-  -> queue processes the PDF in the background
+vault:capture (Materials creation)
+  -> IngestionQueue.enqueue(materialId, localPath)
+  -> Adds row to SQLite `ingestion_queue` (status = 'waiting')
+  -> concept_index status set to 'queued'
+  -> Background processing starts via processNext()
 ```
 
-The ingestion queue does this:
+During extraction, `IngestionQueue` executes:
+1. **Verbatim Bounding-Box Extraction**: Uses PDF.js (`pdfjs-dist`) to read text fragments and normalize their exact spatial coordinates ($X, Y, W, H$) to $[0.0 - 1.0]$ bounds relative to the page.
+2. **Repeating Margins Filtering**: Analyzes page headers, footers, and page numbers across pages and registers repeating lines to strip them from chunks (preventing noise).
+3. **TOC Guard**: Reconstructs full-page text and runs `isTOCPage` check to skip front matter.
+4. **Column Detection**: Detects horizontal coordinate gaps. Text in double-column layouts is split into separate columns and read top-to-bottom.
+5. **Precise Heading Heuristics**: Runs `isHeadingLine` to find section boundaries. Regular prose starting with "Chapter X" or list items are filtered out to avoid index pollution.
+6. **Recursive Character Splitting**: Prose between headings is split into chunks of `512` characters with `64` character overlap using LangChain's `RecursiveCharacterTextSplitter`. This fits the local embedding model's **256-token limit** (`all-MiniLM-L6-v2`), avoiding silent truncation.
+7. **Local ONNX Embeddings**: Runs the model in the ONNX runtime via `@xenova/transformers` to generate a 384-dimension vector float array.
+8. **Storage**: Vectors are saved as binary blobs in SQLite, mapped to virtual vector tables (`sqlite-vec`), and a basic outline of topics is stored in the `concept_index` table.
 
-```text
-Read PDF with PDF.js
-  -> extract text and page positions
-  -> skip pages that look like TOC/front matter
-  -> split text into chunks
-  -> create embeddings with local Transformers model
-  -> store chunks in document_chunks
-  -> store embeddings as BLOBs
-  -> insert vectors into sqlite-vec table
-  -> update concept_index status to ready
-  -> notify renderer with professor:ingestionProgress
+---
+
+### Phase 2: Intent Classification & Hybrid Retrieval
+
+When a user submits a query, `ProfessorService` classifies the RAG intent to route retrieval:
+- `PAGE_CONTEXT`: Fetches chunks in a window surrounding the active page ($\pm 2$ pages).
+- `CHAPTER_SUMMARY`: Extracts chapter numbers from the query and fetches only chunks belonging to those chapters.
+- `COMPARISON`: Splits the query on "vs" or "and" and runs dual parallel lookups.
+- `FACT_LOOKUP` / `GENERAL_SEMANTIC`: Standard global lookups.
+
+**Retrieval & Ranking (Hybrid RRF):**
+- **BM25 Search**: Matches text keywords against all chunks of the material.
+- **Vector Search**: Computes cosine similarity between the query embedding and chunk embeddings using `sqlite-vec`.
+- **RRF Reciprocal Rank Fusion**: Ranks candidates from both methods:
+  $$RRF\_Score = \frac{1}{60 + rank_{BM25}} + \frac{1}{60 + rank_{Vector}}$$
+- **Metadata Boosts**: Adds a boost if the chunk is in the targeted chapter or is physically close to the student's active page.
+
+---
+
+### Phase 3: The Agentic Tool Loop
+
+Rather than running a simple single-shot RAG call, the application launches an iterative research cycle using **Gemini Tool Calling** or **OpenAI Tool calling**.
+
+**Retrievable Tools:**
+- `search_chunks(query)`: Searches the vector index and returns chunk IDs/pages (does not return text).
+- `get_page(page_number)`: Authoritative verbatim scraper that retrieves the full text of a page.
+- `get_page_range(start, end)`: Scrapes a range of pages.
+- `get_topic(topic_name)`: Resolves topic names in the concept index and fetches their page text.
+- `get_section(section_title)`: Scrapes sections by heading title.
+- `get_chapter(chapter_id)`: Scrapes chunks in a chapter.
+- `list_topics()` / `list_sections()`: Returns document outline topics/headings.
+
+**The Execution Cycle:**
+1. System instructions and compressed message history are sent to the model along with the active page text.
+2. The model evaluates whether the context contains enough facts to answer.
+3. If not, it returns tool calls (e.g. `search_chunks` then `get_page`).
+4. The main process executes the tools via IPC, appends results, and loops (up to 8 iterations).
+5. Once research completes, the model outputs the final answer using `professor_response`.
+
+---
+
+### Phase 4: Structured Output & Visual Synchronization
+
+To make the AI feel integrated with the PDF viewer, the final output must conform to a strict JSON schema:
+```json
+{
+  "thinking": "inner monologue",
+  "speech": "teaching response text (markdown)",
+  "pdf_annotations": [
+    { "type": "highlight", "page": 145, "targetText": "verbatim text to highlight", "color": "orange" }
+  ],
+  "board_actions": [
+    { "tool": "chalk", "content": "formula / sketch", "position": { "x": 0.5, "y": 0.5 }, "style": { "color": "white", "size": 24 }, "timing": 500 }
+  ],
+  "navigate_to_page": 145
+}
 ```
 
-Beginner meaning of an embedding:
-
-```text
-An embedding is a list of numbers that represents the meaning of text.
-Similar text gets similar number lists.
-```
-
-This project uses 384-number embeddings from:
-
-```text
-Xenova/all-MiniLM-L6-v2
-```
-
-The app stores those numbers in SQLite as binary blobs.
-
-### Phase 2: Retrieval
-
-When the user asks a question, the app needs to find useful document chunks.
-
-Important file:
-
-```text
-electron/services/professorService.ts
-```
-
-The retrieval system classifies the question. Examples:
-
-- Current page question
-- Chapter summary
-- Fact lookup
-- Comparison
-- General semantic question
-
-Then it retrieves chunks using a mix of:
-
-- page/chapter metadata
-- text matching/BM25-style scoring
-- vector similarity through sqlite-vec
-- filters to avoid TOC pollution
-
-Plain meaning:
-
-```text
-Before asking the LLM, the app tries to find the parts of the PDF that probably answer the user's question.
-```
-
-### Phase 3: LLM Answer
-
-The renderer coordinates the final LLM call.
-
-Important files:
-
-- `src/components/tabs/AiTutorPanel.tsx`
-- `src/lib/ai.ts`
-- `src/lib/gemini.ts`
-- `src/hooks/useProfessorSession.ts`
-
-Flow:
-
-```text
-User types a question
-  -> AiTutorPanel sends classifyAndRetrieve IPC
-  -> professorService returns relevant chunks and intent
-  -> AiTutorPanel builds a system prompt
-  -> src/lib/ai.ts calls selected provider
-  -> provider returns JSON with speech, annotations, board actions, optional page navigation
-  -> AiTutorPanel renders the answer
-  -> PDF annotations are applied
-  -> blackboard actions are drawn
-  -> session is saved
-```
-
-The app supports multiple providers through user settings:
-
-- Gemini
-- OpenAI
-- Anthropic
-- OpenRouter
-
-Keys are stored locally. The LLM calls are not the same as embeddings. Embeddings are local; LLM answers are remote unless the provider points to some local-compatible endpoint in future work.
-
-### What RAG Means in This App
-
-RAG means:
-
-```text
-Retrieve useful document text first.
-Then generate an answer using that retrieved text.
-```
-
-Without RAG:
-
-```text
-User asks: "What does page 12 say about X?"
-LLM guesses from general training.
-```
-
-With RAG:
-
-```text
-User asks: "What does page 12 say about X?"
-App retrieves chunks from page 12 or related sections.
-LLM receives those chunks.
-LLM must cite those chunks.
-```
-
-The app tries to force grounded answers by building prompts that say:
-
-- use only provided document sections
-- cite claims
-- say when the document does not contain enough information
-- return JSON so the UI can draw highlights and board actions
-
-This is why AI code has a lot of prompt and validation logic.
+**Experimental Fallbacks & Workarounds:**
+- **Double exact-match matching**: In [AiTutorPanel.tsx](file:///f:/SIC%20v4/CorvoVault/src/components/tabs/AiTutorPanel.tsx), PDF ligatures (like `ﬁ`, `ﬂ`, `ﬀ`) and hyphens are expanded on both the viewer side and LLM side to ensure text highlights do not fail silently.
+- **Parsing Fallback Workaround**: In [ai.ts](file:///f:/SIC%20v4/CorvoVault/src/lib/ai.ts), if the model fails to return valid JSON (e.g. due to OpenAI/OpenRouter ignoring tool calling structures), the parser gracefully wraps the raw text as `{ speech: text }` instead of throwing a parsing error. This prevents UI crashes but drops visual highlights and blackboard actions.
+- **Canvas Rendering**: Highlights are mapped onto the PDF.js viewport layers, chalkboard actions are drawn on the whiteboard canvas, and `navigate_to_page` triggers viewport auto-navigation.
 
 ## How the Browser Works
 
@@ -1572,5 +1523,85 @@ Reality: the app ingests the PDF into chunks first, then retrieves relevant chun
 Mistake: thinking embeddings and LLM answers are the same thing.
 
 Reality: embeddings are local numeric representations for search. LLM answers come from remote provider APIs using the user's key.
+# Return to heavy engineering part
 
-I created a new branch to fix the chunking function. and here is what I found.
+## Chunk Size and Retrieval Mathematics
+
+To configure the local retrieval-augmented generation (RAG) system, chunk sizing is selected based on the constraints of the local embedding model, storage footprint, and LLM context limits.
+
+### 1. Token vs. Character Constraints
+The system uses the local **`all-MiniLM-L6-v2`** model for generating vector embeddings:
+* **Model Dimension**: $384$
+* **Maximum Input Token Limit**: **`256` tokens**
+
+#### The Token-to-Character Ratio
+In standard English prose:
+* $1 \text{ English word} \approx 1.3 \text{ tokens}$
+* $1 \text{ English word} \approx 5 \text{ characters}$ (including spaces/punctuation)
+* Therefore, $1 \text{ token} \approx 3.8\text{--}4 \text{ characters}$ on average.
+
+Using a conversion of $1 \text{ token} \approx 3 \text{ characters}$ to account for special characters and formatting:
+$$\text{Max Characters} = 256 \text{ tokens} \times 3 \text{ characters/token} = 768 \text{ characters}$$
+
+#### The Hard Limit (`CHUNK_MAX_CHARS`)
+In [ingestionQueue.ts](file:///f:/SIC%20v4/CorvoVault/electron/services/ingestionQueue.ts), the limit is set to:
+```typescript
+const CHUNK_MAX_CHARS = 750;
+```
+This ensures that even dense prose stays below the **256-token limit**. If set higher, the local ONNX model would truncate the remaining text, losing semantic information from the vector index.
+
+---
+
+### 2. Recursive Splitter Configuration
+In [ingestionQueue.ts](file:///f:/SIC%20v4/CorvoVault/electron/services/ingestionQueue.ts), the LangChain splitter is configured as:
+```typescript
+const splitter = new RecursiveCharacterTextSplitter({
+  chunkSize: 512,
+  chunkOverlap: 64,
+  separators: ['\n\n', '\n', '. ', ' '],
+});
+```
+
+- **Target Size (`chunkSize`)**: `512` characters (~128 tokens). This targets 50% of the embedding model's input limit to provide a safety buffer for outlier token densities.
+- **Overlap Size (`chunkOverlap`)**: `64` characters (~16 tokens). This maintains context (like pronouns or trailing phrases) across split boundaries.
+
+---
+
+### 3. Database Storage & Footprint
+Each chunk stored in the database contains text, metadata, and the raw vector embedding:
+
+#### Byte Breakdown per Chunk:
+1. **Text Content**: Up to $750$ characters $\approx 750 \text{ bytes}$ (UTF-8).
+2. **Vector Embedding**: 
+   * Float32 requires $4 \text{ bytes}$ of storage per element.
+   * Dimension = $384$.
+   * $$\text{Embedding Size} = 384 \text{ elements} \times 4 \text{ bytes} = 1,536 \text{ bytes} \approx 1.5 \text{ KB}$$
+3. **Database Metadata & shadow indexes** $\approx 1.75 \text{ KB}$ per row.
+
+$$\text{Total Footprint per Chunk} \approx 0.75\text{ KB (Text)} + 1.5\text{ KB (Vector)} + 1.75\text{ KB (Metadata/Index)} = 4.0\text{ KB}$$
+
+#### Footprint for a 300-page Textbook:
+* **Average Text Density**: $500 \text{ words/page} \approx 3,000 \text{ characters/page}$.
+* **Effective Chunk Step (due to overlap)**: 
+  $$\text{Effective Step} = \text{chunkSize} - \text{chunkOverlap} = 512 - 64 = 448 \text{ characters}$$
+* **Chunks from Prose**:
+  $$\text{Prose Chunks} = \frac{3,000 \text{ characters/page}}{448 \text{ characters/chunk}} \approx 6.7 \text{ chunks/page}$$
+* **Total Chunks**: $\approx 8 \text{ chunks/page}$ (including equations, headings, and captions).
+* **Total Document Chunks**: $300 \text{ pages} \times 8 \text{ chunks/page} = 2,400 \text{ chunks}$.
+* **Total Database Storage Overhead**:
+  $$\text{Total Storage} = 2,400 \text{ chunks} \times 4.0 \text{ KB/chunk} \approx 9,600 \text{ KB} \approx 9.6 \text{ MB}$$
+
+This local SQLite storage via `sqlite-vec` requires less than **$10\text{ MB}$ per book**.
+
+---
+
+### 4. Retrieval Context Window Efficiency
+When answering a user's question, the system fetches the top $K$ chunks and injects them into the LLM system prompt:
+
+* **Case A: Large Chunks** (`chunkSize = 2048` characters $\approx 512$ tokens, retrieving $K = 4$):
+  $$\text{Context Size} = 4 \text{ chunks} \times 512 \text{ tokens} = 2,048 \text{ tokens}$$
+  * *Disadvantage*: Limits context to 4 distinct pages, and includes irrelevant neighboring text that dilutes model attention.
+
+* **Case B: Selected Chunks** (`chunkSize = 512` characters $\approx 128$ tokens, retrieving $K = 8$):
+  $$\text{Context Size} = 8 \text{ chunks} \times 128 \text{ tokens} = 1,024 \text{ tokens}$$
+  * *Advantage*: Doubles retrieval diversity (fetching context from **8 distinct parts** of the document) while using **50% less token budget** (1,024 tokens instead of 2,048), reducing prompt latency and API cost.

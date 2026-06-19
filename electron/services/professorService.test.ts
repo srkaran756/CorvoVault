@@ -130,3 +130,75 @@ describe('ProfessorService classifyAndRetrieve', () => {
     expect(res.intent).toBe('FACT_LOOKUP');
   });
 });
+
+describe('ProfessorService retrieval tools', () => {
+  let db: Database.Database;
+  let service: ProfessorService;
+
+  beforeEach(() => {
+    db = createTestDb();
+    service = new ProfessorService(db);
+
+    db.prepare(`
+      INSERT INTO document_chunks (
+        chunk_id, material_id, page, section, chunk_type, text, chunk_order, created_at, chapter_id
+      ) VALUES
+        ('c1', 'mat1', 1, 'Introduction', 'heading', 'Chapter 1: Intro to Biology', 0, 100, 'chapter_1'),
+        ('c2', 'mat1', 1, 'Introduction', 'paragraph', 'Biology is the study of life.', 1, 101, 'chapter_1'),
+        ('c3', 'mat1', 5, 'Cell Structure', 'heading', 'Chapter 2: Cells', 2, 102, 'chapter_2'),
+        ('c4', 'mat1', 5, 'Cell Structure', 'paragraph', 'Cells are the basic units of life.', 3, 103, 'chapter_2')
+    `).run();
+
+    service.storeConceptIndex('mat1', {
+      topics: [
+        { name: 'Chapter 1: Intro to Biology', page: 1, endPage: 4, pages: [1, 2, 3, 4] },
+        { name: 'Chapter 2: Cells', page: 5, endPage: 8, pages: [5, 6, 7, 8] }
+      ]
+    }, 'ready');
+  });
+
+  it('runs search_chunks correctly and returns locator previews', async () => {
+    const res = await service.search_chunks('mat1', 'Biology');
+    expect(res.length).toBeGreaterThan(0);
+    expect(res[0]).toHaveProperty('chunk_id');
+    expect(res[0]).toHaveProperty('preview');
+    expect(res[0]).toHaveProperty('page');
+    expect(res[0].preview.length).toBeLessThanOrEqual(153);
+  });
+
+  it('runs get_page correctly', () => {
+    const res = service.get_page('mat1', 1);
+    expect(res.length).toBe(2);
+    expect(res[0].text).toBe('Chapter 1: Intro to Biology');
+  });
+
+  it('runs get_topic correctly', () => {
+    const res = service.get_topic('mat1', 'Cells');
+    expect(res.length).toBe(2);
+    expect(res[0].section).toBe('Cell Structure');
+  });
+
+  it('runs get_section correctly', () => {
+    const res = service.get_section('mat1', 'Introduction');
+    expect(res.length).toBe(2);
+    expect(res[0].chapter_id).toBe('chapter_1');
+  });
+
+  it('runs list_topics correctly', () => {
+    const res = service.list_topics('mat1');
+    expect(res.length).toBe(2);
+    expect(res[0].name).toBe('Chapter 1: Intro to Biology');
+  });
+
+  it('runs list_sections correctly', () => {
+    const res = service.list_sections('mat1');
+    expect(res.length).toBe(2);
+    expect(res[0].title).toBe('Introduction');
+  });
+
+  it('runs get_chapter correctly', () => {
+    const res = service.get_chapter('mat1', '2');
+    expect(res.length).toBe(2);
+    expect(res[0].page).toBe(5);
+  });
+});

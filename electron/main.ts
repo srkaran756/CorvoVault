@@ -171,7 +171,7 @@ app.whenReady().then(() => {
   registerThemeHandlers(serviceHost);
   registerAnalyticsHandlers(db, serviceHost);
   registerMigrationHandlers(db, serviceHost);
-  registerProfessorHandlers(db, serviceHost.professor);
+  registerProfessorHandlers(db, serviceHost.professor, serviceHost.ingestionQueue);
 
   // NOW load the URL / file content after all handlers are fully registered
   if (mainWindow) {

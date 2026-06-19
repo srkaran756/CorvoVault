@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Sparkles,
+  Brain,
   Trash2,
   X,
   Loader2,
@@ -262,6 +263,23 @@ function generateMarkdownReport(debugInfo: any, steps: any, materialTitle: strin
     boardActionsMd = '*No blackboard actions were triggered.*';
   }
 
+  let agentToolsMd = '';
+  if (debugInfo.agentToolCalls && debugInfo.agentToolCalls.length > 0) {
+    agentToolsMd = '## 🤖 Agentic Document Research Tool Log\n\n| Step | Tool Called | Parameters | Details / Results |\n| :--- | :--- | :--- | :--- |\n';
+    debugInfo.agentToolCalls.forEach((call: any, idx: number) => {
+      let resultSummary = '';
+      if (Array.isArray(call.result)) {
+        resultSummary = `Retrieved ${call.result.length} entries`;
+      } else if (call.result && call.result.error) {
+        resultSummary = `❌ Error: ${call.result.error}`;
+      } else {
+        resultSummary = JSON.stringify(call.result).slice(0, 100) + '...';
+      }
+      agentToolsMd += `| ${idx + 1} | \`${call.tool}\` | \`${JSON.stringify(call.args)}\` | ${resultSummary} |\n`;
+    });
+    agentToolsMd += '\n---\n\n';
+  }
+
   return `# AI Pipeline Analysis Report
 
 Generated at: **${new Date().toLocaleString()}** (Execution time: ${timestamp})
@@ -290,7 +308,7 @@ ${stepsTraceMd}
 
 ---
 
-## 🔍 Retrieved Semantic Context
+${agentToolsMd}## 🔍 Retrieved Semantic Context
 
 ${chunksMd}
 
@@ -362,15 +380,17 @@ export default function AiTutorPanel({
   const selectedModel = settings?.selectedModel || 'gemini';
 
   // AI chat states
-  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; timestamp: string; sources?: number[] }>>([]);
+  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; timestamp: string; sources?: number[]; thinking?: string }>>([]);
   const [chatInput, setChatInput] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiThinking, setAiThinking] = useState('');
+  const [aiStreamingSpeech, setAiStreamingSpeech] = useState('');
 
   // Pipeline debug state
   const [showDebugDrawer, setShowDebugDrawer] = useState(false);
   const [lastDebugInfo, setLastDebugInfo] = useState<any>(null);
-  const [activeDebugTab, setActiveDebugTab] = useState<'flow' | 'rag' | 'prompt' | 'payload' | 'response'>('flow');
+  const [activeDebugTab, setActiveDebugTab] = useState<'flow' | 'rag' | 'prompt' | 'payload' | 'response' | 'thinking'>('flow');
   const [copiedText, setCopiedText] = useState(false);
 
   const [pipelineSteps, setPipelineSteps] = useState<Record<string, {
@@ -467,7 +487,7 @@ export default function AiTutorPanel({
     if (chatEndRef.current) {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [chatMessages, aiLoading]);
+  }, [chatMessages, aiLoading, aiThinking, aiStreamingSpeech]);
 
   // AI Message Dispatcher
   const handleSendMessage = async (customPrompt?: string) => {
@@ -567,268 +587,62 @@ export default function AiTutorPanel({
     };
 
     try {
-      // 1. Classification & context retrieval
-      const classificationStart = performance.now();
-      let conceptIndex = null;
-      let relevantChunks = [];
-      let intent = 'FACTUAL';
+      let intent = 'AGENTIC';
+      let relevantChunks: any[] = [];
       let retrieveMetrics = null;
+
+      // 1. Setup / Initialization
+      updateStep('classification', 'completed', 0, 'Delegated to Agent');
+      updateStep('coverage', 'completed', 0, 'Delegated to Agent');
+      
+      const setupStart = performance.now();
+      let conceptIndex = null;
       if ((window as any).electronAPI) {
         try {
-          const res = await (window as any).electronAPI.professorClassifyAndRetrieve(
-            material.id,
-            currentPage,
-            numPages,
-            promptText,
-            professorSession.conversationHistory
-          );
-          conceptIndex = res.conceptIndex;
-          relevantChunks = res.relevantChunks || [];
-          intent = res.intent;
-          retrieveMetrics = res.metrics || null;
-        } catch (e: any) {
-          console.warn('[Professor] RAG classify and retrieval failed:', e);
-          updateStep('classification', 'error', Math.round(performance.now() - classificationStart), e.message || 'RAG Retrieval Failed');
-          throw e;
+          conceptIndex = await (window as any).electronAPI.invoke('professor:getConceptIndex', material.id);
+        } catch(e) {
+          console.warn('Failed to load concept index', e);
         }
       }
-      const classificationDuration = Math.round(performance.now() - classificationStart);
-      updateStep('classification', 'completed', classificationDuration, `Intent: ${intent} | ${relevantChunks.length} chunks retrieved`);
-
-      // 2. Coverage verification and secondary retrieval
-      updateStep('coverage', 'running', undefined, 'Analyzing semantic coverage...');
-      const coverageStart = performance.now();
-      const currentCoverage = retrieveMetrics?.coverage ?? 0;
-      const missingWords = retrieveMetrics?.missingConcepts ?? [];
-      let secondaryPerformed = false;
-      if (currentCoverage < 0.80 && missingWords.length > 0 && (window as any).electronAPI) {
-        try {
-          secondaryPerformed = true;
-          const refinedQuery = `INTENT:FACTUAL ${missingWords.join(' ')}`;
-          const secondRes = await (window as any).electronAPI.professorClassifyAndRetrieve(
-            material.id,
-            currentPage,
-            numPages,
-            refinedQuery,
-            professorSession.conversationHistory
-          );
-          const secondChunks = secondRes.relevantChunks || [];
-          
-          // Merge and de-duplicate by chunk_id.
-          // FIX: Keep primary chunks in their score-rank order, then append secondary
-          // chunks that are genuinely new. Do NOT re-sort by chunk_order — that would
-          // replace the most semantically relevant later-chapter chunks with earlier
-          // chronological ones that may not answer the query at all.
-          const seen = new Set(relevantChunks.map(c => c.chunk_id || c.chunkId));
-          const merged = [...relevantChunks];
-          for (const c of secondChunks) {
-            const cid = c.chunk_id || c.chunkId;
-            if (!seen.has(cid)) {
-              seen.add(cid);
-              merged.push(c);
-              if (merged.length >= 10) break; // cap at 10
-            }
-          }
-          relevantChunks = merged.slice(0, 10);
-
-          // Update metrics to reflect secondary coverage
-          if (retrieveMetrics) {
-            const newCoverage = secondRes.metrics?.coverage ?? currentCoverage;
-            const newMissing = secondRes.metrics?.missingConcepts ?? [];
-            retrieveMetrics.coverage = Math.max(currentCoverage, newCoverage);
-            retrieveMetrics.missingConcepts = newMissing.filter(w => !relevantChunks.some(rc => (rc.text || '').toLowerCase().includes(w)));
-          }
-        } catch (e: any) {
-          console.warn('[Professor] Secondary RAG retrieval failed:', e);
-          updateStep('coverage', 'error', Math.round(performance.now() - coverageStart), e.message || 'Secondary RAG Failed');
-          throw e;
-        }
-      }
-      const coverageDuration = Math.round(performance.now() - coverageStart);
-      const finalCoverage = retrieveMetrics?.coverage ?? currentCoverage;
-      updateStep('coverage', 'completed', coverageDuration, `Coverage: ${Math.round(finalCoverage * 100)}% | Secondary Retrieval: ${secondaryPerformed ? 'Performed' : 'Skipped'}`);
-
-      // Save source map for inline clickable citations
-      currentSourceMapRef.current = (relevantChunks ?? []).map((c: any) => ({
-        page: c.page,
-        section: c.section || 'General'
-      }));
-
-      // 3. Build context sections
-      const chunkContext = (relevantChunks ?? [])
-        .map((c: any, index: number) => `[Source ${index + 1}: Page ${c.page}, Section "${c.section || 'General'}"]\n${c.expandedText || c.text}`)
-        .join('\n\n');
-
+      
       const conceptMapText =
         conceptIndex?.topics?.length > 0
           ? conceptIndex.topics.map((t: any) => `• ${t.name} (pp. ${(t.pages ?? []).join(', ')})`).join('\n')
           : 'Concept map not yet available.';
-
-      // 4. Build system prompt
-      updateStep('systemPrompt', 'running', undefined, 'Synthesizing instructions & context...');
-      const systemPromptStart = performance.now();
-
-      // Problem 2 fix: assess chunk substance before passing to LLM.
-      // If the retrieved chunks contain fewer than 80 words total, the LLM has
-      // nothing to ground its answer in and will fabricate. Inject a warning.
-      const totalChunkWords = (relevantChunks ?? []).reduce((sum: number, c: any) => {
-        return sum + ((c.expandedText || c.text || '').split(/\s+/).filter(Boolean).length);
-      }, 0);
-      const chunkSubstance: 'sufficient' | 'insufficient' = totalChunkWords >= 80 ? 'sufficient' : 'insufficient';
-      
-      // UX 2 friendly fallback message when retrieval is insufficient/empty
-      if (finalCoverage === 0 && chunkSubstance === 'insufficient') {
-        const fallbackSpeech = "I wasn't able to find detailed content for that in the indexed version of this document. This can happen if that section hasn't been fully processed yet. Try asking about a specific concept by name, or rephrase your question.";
-        
-        // Emulate completed remaining steps for the debug inspector drawer
-        updateStep('systemPrompt', 'completed', 0, 'Bypassed prompt synthesis');
-        updateStep('verbatimText', 'completed', 0, 'Bypassed verbatim scraping');
-        updateStep('llmCall', 'completed', 0, 'Bypassed LLM due to insufficient retrieval quality');
-        updateStep('refinement', 'completed', 0, 'Bypassed highlight refinement check');
-        
-        const dispatchStart = performance.now();
-        
-        const nextHistory = [
-          ...professorSession.conversationHistory,
-          { role: 'user', content: promptText },
-          { role: 'assistant', content: fallbackSpeech },
-        ];
-
-        setProfessorSession((prev) => ({
-          ...prev,
-          conversationHistory: nextHistory,
-        }));
-
-        setChatMessages((prev) => [
-          ...prev,
-          {
-            role: 'assistant',
-            content: fallbackSpeech,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            sources: [],
-          },
-        ]);
-        
-        const durationMs = Math.round(performance.now() - startTime);
-        const dispatchDuration = Math.round(performance.now() - dispatchStart);
-        updateStep('dispatch', 'completed', dispatchDuration, 'Dispatched friendly warning warning.');
-
-        const finalSteps = { ...currentSteps };
-
-        setLastDebugInfo({
-          timestamp: new Date().toLocaleTimeString(),
-          query: promptText,
-          intent,
-          systemPrompt: '(Bypassed)',
-          relevantChunks,
-          pageTextsVerbatim: '',
-          messagesSent: [],
-          responseRaw: {
-            speech: fallbackSpeech,
-            pdf_annotations: [],
-            board_actions: [],
-          },
-          finalAnnotations: [],
-          durationMs,
-          model: 'fallback',
-          coverage: 0,
-          missingWords: [],
-          metrics: retrieveMetrics,
-          pipelineSteps: finalSteps,
-        });
-
-        setAiLoading(false);
-        return;
+          
+      // Extract verbatim text ONLY for the current page
+      updateStep('verbatimText', 'running', undefined, 'Fetching current page context...');
+      const verbatimStart = performance.now();
+      let pageTextsVerbatim = '';
+      try {
+        const text = await extractPageVerbatimText(pdfDoc, currentPage);
+        pageTextsVerbatim = `--- PAGE ${currentPage} TEXT ---\n${text}`;
+      } catch (e: any) {
+        console.warn('[Professor] Failed to extract current page text verbatim:', e);
       }
-
+      updateStep('verbatimText', 'completed', Math.round(performance.now() - verbatimStart), 'Current page extracted');
+      
+      // Build System Prompt
+      updateStep('systemPrompt', 'running', undefined, 'Synthesizing agent instructions...');
+      const systemPromptStart = performance.now();
       const systemPrompt = buildProfessorSystemPrompt(
         material.title,
         numPages,
         conceptMapText,
         professorSession.studentModel,
-        professorSession.teachingAgenda,
-        chunkSubstance
+        professorSession.teachingAgenda
       );
-      const systemPromptDuration = Math.round(performance.now() - systemPromptStart);
-      updateStep('systemPrompt', 'completed', systemPromptDuration, `Synthesized instructions (len: ${systemPrompt.length} chars, chunk substance: ${chunkSubstance} — ${totalChunkWords} words)`);
+      updateStep('systemPrompt', 'completed', Math.round(performance.now() - systemPromptStart), `Synthesized instructions (len: ${systemPrompt.length} chars)`);
 
-      // 5. Verbatim Text Extraction
-      updateStep('verbatimText', 'running', undefined, 'Scraping page contents verbatim...');
-      const verbatimStart = performance.now();
-      const verbatimPageSet = new Set<number>();
-      let pageTextsVerbatim = '';
-      let pagesCount = 0;
-      try {
-        verbatimPageSet.add(currentPage);
-        if (relevantChunks && Array.isArray(relevantChunks)) {
-          relevantChunks.forEach((c: any) => {
-            if (typeof c.page === 'number' && c.page >= 1 && c.page <= numPages) {
-              verbatimPageSet.add(c.page);
-            }
-          });
-        }
-
-        const sortedPages = Array.from(verbatimPageSet).sort((a, b) => a - b);
-        pagesCount = sortedPages.length;
-
-        // Group raw_text by page from retrieved chunks
-        const rawTextByPage = new Map<number, string[]>();
-        if (relevantChunks && Array.isArray(relevantChunks)) {
-          for (const c of relevantChunks) {
-            if (c.raw_text && typeof c.page === 'number') {
-              if (!rawTextByPage.has(c.page)) rawTextByPage.set(c.page, []);
-              rawTextByPage.get(c.page)!.push(c.raw_text);
-            }
-          }
-        }
-
-        const results = await Promise.all(
-          sortedPages.map(async (pNum) => {
-            const dbTexts = rawTextByPage.get(pNum);
-            if (dbTexts && dbTexts.length > 0) {
-              // Problem 3 fix: check substance of DB-sourced text before including.
-              // If the combined raw_text for this page is sparse (< 40 words),
-              // it is almost certainly a TOC or cover page that slipped through.
-              const combinedDb = dbTexts.join(' ');
-              const wordCountDb = combinedDb.split(/\s+/).filter(Boolean).length;
-              if (wordCountDb < 40) {
-                console.warn(`[VerbatimScraper] Page ${pNum} has only ${wordCountDb} words from DB — skipping (likely TOC)`);
-                return null;
-              }
-              return `--- PAGE ${pNum} TEXT ---\n${combinedDb}`;
-            }
-            const text = await extractPageVerbatimText(pdfDoc, pNum);
-            // Word-count guard for live-extracted pages too
-            const wordCount = text.split(/\s+/).filter(Boolean).length;
-            if (wordCount < 40) {
-              console.warn(`[VerbatimScraper] Page ${pNum} has only ${wordCount} words — skipping verbatim (likely TOC/cover)`);
-              return null;
-            }
-            return `--- PAGE ${pNum} TEXT ---\n${text}`;
-          })
-        );
-        // Filter out null entries (skipped TOC/sparse pages)
-        pageTextsVerbatim = results.filter(Boolean).join('\n\n');
-      } catch (e: any) {
-        console.warn('[Professor] Failed to extract page texts verbatim:', e);
-        updateStep('verbatimText', 'error', Math.round(performance.now() - verbatimStart), e.message || 'Verbatim Extraction Failed');
-        throw e;
-      }
-      const verbatimDuration = Math.round(performance.now() - verbatimStart);
-      updateStep('verbatimText', 'completed', verbatimDuration, `Extracted verbatim text from ${pagesCount} pages`);
-
-      // 6. LLM Inference
-      updateStep('llmCall', 'running', undefined, `Requesting structured response from ${resolvedProvider}...`);
+      // LLM Call (Agent Loop)
+      updateStep('llmCall', 'running', undefined, `Starting agentic research loop via ${resolvedProvider}...`);
       const llmStart = performance.now();
       
       const userTurnContent = [
         `Current Page: ${currentPage} of ${numPages}`,
         '',
-        'Verbatim Text of Relevant Pages (use this for highlights):',
+        'Verbatim Text of Current Page (use this for highlights if answering directly from it):',
         pageTextsVerbatim || '(Unable to extract text)',
-        '',
-        'Relevant Document Sections (for extra context):',
-        chunkContext || '(not yet indexed — use your knowledge)',
         '',
         `Student: ${promptText}`,
       ].join('\n').trim();
@@ -845,93 +659,32 @@ export default function AiTutorPanel({
         { role: 'user', content: userTurnContent },
       ];
 
-      const professorResponse = await generateProfessorResponse(aiConfig, messages);
+      const agentToolCalls: any[] = [];
+      setAiThinking('');
+      setAiStreamingSpeech('');
+
+      const professorResponse = await generateProfessorResponse(
+        aiConfig,
+        messages,
+        undefined,
+        material.id,
+        (tool, args, result) => {
+          console.log(`[onToolCall] ${tool}`, args);
+          agentToolCalls.push({ tool, args, result, timestamp: Date.now() });
+          updateStep('llmCall', 'running', undefined, `Agent Tool Execution: ${tool}`);
+        },
+        (chunk) => {
+          if (chunk.thinking !== undefined) setAiThinking(chunk.thinking);
+          if (chunk.speech !== undefined) setAiStreamingSpeech(chunk.speech);
+        }
+      );
       const llmDuration = Math.round(performance.now() - llmStart);
       updateStep('llmCall', 'completed', llmDuration, `Response received from ${professorResponse.modelNameUsed || resolvedProvider} (${professorResponse.speech.length} chars of speech)`);
 
-      // 7. Annotation Refinement (Blind Check)
-      updateStep('refinement', 'running', undefined, 'Checking annotations for missing page contexts...');
-      const refinementStart = performance.now();
+      // Refinement bypass
+      updateStep('refinement', 'completed', 0, 'Refinement delegated to LLM tools');
+      
       let finalAnnotations = professorResponse.pdf_annotations ?? [];
-      let blindPagesSize = 0;
-      let refinementPerformed = false;
-      let refinementModel = '';
-
-      if (finalAnnotations.length > 0) {
-        const blindPages = new Set<number>();
-        for (const ann of finalAnnotations) {
-          if (typeof ann.page === 'number' && ann.page >= 1 && ann.page <= numPages && !verbatimPageSet.has(ann.page)) {
-            blindPages.add(ann.page);
-          }
-        }
-        blindPagesSize = blindPages.size;
-
-        if (blindPages.size > 0) {
-          updateStep('refinement', 'running', undefined, `Refining ${blindPages.size} blind page annotations...`);
-          const blindPageTexts: string[] = [];
-          for (const pNum of Array.from(blindPages).sort((a, b) => a - b)) {
-            try {
-              const text = await extractPageVerbatimText(pdfDoc, pNum);
-              blindPageTexts.push(`--- PAGE ${pNum} TEXT ---\n${text}`);
-            } catch (e) {
-              console.warn(`[Professor] Refinement: failed to extract page ${pNum}`, e);
-            }
-          }
-
-          if (blindPageTexts.length > 0) {
-            refinementPerformed = true;
-            const refinementUserContent = [
-              'You previously generated pdf_annotations but lacked verbatim text for some pages.',
-              'Here is the EXACT text for those pages (use it to copy targetText verbatim):',
-              '',
-              blindPageTexts.join('\n\n'),
-              '',
-              'Original annotations that need refinement (only fix targetText — keep page, type, color, callout):',
-              JSON.stringify(
-                finalAnnotations.filter(a => blindPages.has(a.page)),
-                null, 2
-              ),
-            ].join('\n');
-
-            const refinementMessages: ChatMessage[] = [
-              {
-                role: 'system',
-                content: 'CRITICAL OUTPUT RULE:\nYou must output a single valid JSON object. Do not write any explanation, reasoning, or commentary before or after the JSON. Do not use markdown fences (```json). Your entire response must start with { and end with }.\n\n' +
-                  'You are fixing annotation targetText. Return ONLY a valid JSON object with a single key "pdf_annotations" containing the corrected annotations array. ' +
-                  'Copy targetText verbatim (≥10 consecutive words, or the entire page text if the page contains fewer than 10 words) from the page text provided. Keep page, type, color, callout unchanged. No other keys.',
-              },
-              { role: 'user', content: refinementUserContent },
-            ];
-
-            try {
-              const refined = await generateProfessorResponse(aiConfig, refinementMessages);
-              refinementModel = refined.modelNameUsed || '';
-              if (refined.pdf_annotations?.length > 0) {
-                const refinedByPage = new Map<number, typeof finalAnnotations>();
-                for (const ann of refined.pdf_annotations) {
-                  if (!refinedByPage.has(ann.page)) refinedByPage.set(ann.page, []);
-                  refinedByPage.get(ann.page)!.push(ann);
-                }
-                finalAnnotations = [
-                  ...finalAnnotations.filter(a => !blindPages.has(a.page)),
-                  ...Array.from(refinedByPage.values()).flat(),
-                ];
-              }
-            } catch (e) {
-              console.warn('[Professor] Refinement call failed, using original annotations:', e);
-            }
-          }
-        }
-      }
-      const refinementDuration = Math.round(performance.now() - refinementStart);
-      updateStep(
-        'refinement', 
-        'completed', 
-        refinementDuration, 
-        blindPagesSize > 0 
-          ? `Refined ${blindPagesSize} blind pages using ${refinementModel || resolvedProvider} (${refinementPerformed ? 'Success' : 'Failed to extract text'})` 
-          : 'Skipped: all annotation targets had verbatim context.'
-      );
 
       // 8. Visual Action Dispatching
       updateStep('dispatch', 'running', undefined, 'Dispatching visual updates & syncing...');
@@ -958,6 +711,7 @@ export default function AiTutorPanel({
         {
           role: 'assistant',
           content: professorResponse.speech,
+          thinking: professorResponse.thinking,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           sources: uniquePages,
         },
@@ -966,6 +720,9 @@ export default function AiTutorPanel({
       if (professorResponse.board_actions?.length > 0) {
         onBoardActions(professorResponse.board_actions);
       }
+
+      setAiThinking('');
+      setAiStreamingSpeech('');
 
       // UX 3 — Navigate to the right page automatically when answering a chapter question
       let targetPage: number | null = null;
@@ -1035,6 +792,7 @@ export default function AiTutorPanel({
         systemPrompt,
         relevantChunks,
         pageTextsVerbatim,
+        agentToolCalls,
         messagesSent: messages,
         responseRaw: professorResponse,
         finalAnnotations,
@@ -1088,26 +846,14 @@ export default function AiTutorPanel({
     totalPages: number,
     conceptMapText: string,
     studentModel: ProfessorSession['studentModel'],
-    agenda: string[],
-    chunkSubstance: 'sufficient' | 'insufficient' = 'sufficient'
+    agenda: string[]
   ): string => {
-    // Problem 2 fix: when retrieved chunks lack prose, inject an explicit
-    // grounding warning so the LLM does not fabricate from training data.
-    const substanceWarning = chunkSubstance === 'insufficient'
-      ? `
-RETRIEVAL QUALITY WARNING: The retrieved document sections for this query contain very
-little prose content (possibly due to indexing of front-matter or TOC pages). If you
-cannot find a direct answer in the sections provided below, you MUST say exactly:
-"I could not find enough information in the document to answer this."
-Do NOT synthesize an answer from your general knowledge. Do NOT invent citations.
-`
-      : '';
 
     return `CRITICAL OUTPUT RULE:
 You must output a single valid JSON object. Do not write any explanation, reasoning, or commentary before or after the JSON. Do not use markdown fences (\`\`\`json). Your entire response must start with { and end with }.
 
 You are an elite academic professor teaching the document "${title}" (${totalPages} pages total).
-${substanceWarning}
+
 DOCUMENT STRUCTURE:
 ${conceptMapText}
 
@@ -1125,14 +871,25 @@ ${
 Questions asked: ${studentModel.questions_asked.length}
 
 GROUNDING RULES — CRITICAL:
-1. Base your answer ONLY on the "Relevant Document Sections" provided. Do NOT use your general training knowledge to explain details not present in the document.
-2. If the answer or necessary information cannot be found in the provided sections, you must state exactly: "I could not find this in the document."
-3. Every factual claim, explanation, or definition you write in "speech" must be immediately followed by an inline source citation in brackets (e.g. [1], [2], etc.) pointing to the source index from "Relevant Document Sections" that supports it. Do not group multiple sources into [1, 2], write them separately as [1][2].
+1. Base your answer ONLY on the document sections you explicitly retrieve. Do NOT use your general training knowledge to explain details not present in the document.
+2. If the necessary information cannot be found in the retrieved sections, you must state exactly: "I could not find this in the document."
+3. Every factual claim, explanation, or definition you write in "speech" must be immediately followed by an inline source citation in brackets (e.g. [1], [2], etc.) pointing to the source index/page that supports it.
+
+DOCUMENT RESEARCH SKILL & DECISION CYCLE:
+- Your goal is to research systematically and gather sufficient evidence before answering.
+- Follow the Agent Decision Cycle:
+  1. Evaluate whether your current context contains enough evidence to answer the student's question.
+  2. If evidence is insufficient, choose an appropriate tool to search or read.
+  3. First use Navigation Tools (e.g. search_chunks, list_topics, list_sections) to find where information lives. search_chunks returns references, NOT text.
+  4. You MUST call a Reading Tool (e.g. get_page, get_topic, get_section, get_chapter) to retrieve the full, authoritative text before generating an answer.
+  5. Maintain a Progressive Evidence Memory of all content retrieved.
+  6. Stop retrieving when additional queries will not materially improve the quality, completeness, or accuracy of your answer.
+  7. Deliver your final response only by calling the professor_response tool.
 
 TEACHING & FORMATTING RULES:
 - Focus on the student's question, but build connections to related sections.
 - When referencing specific text or sections of the document, set page, targetText, and color in pdf_annotations. Use any color requested by the student (e.g., 'red', 'green', 'blue', 'pink', 'purple'), or if none is specified, use 'orange'.
-- targetText rules: (a) Copy at least 10 consecutive words (or the entire page text if the page contains fewer than 10 words), verbatim, from the raw "Verbatim Text of Relevant Pages" provided below — exact bytes, no paraphrasing, no spelling corrections. (b) Set page to the exact number shown in the "--- PAGE N ---" header. (c) Never copy across page boundaries.
+- targetText rules: (a) Copy at least 10 consecutive words (or the entire page text if the page contains fewer than 10 words), verbatim, from the raw "Verbatim Text of Current Page" provided below or text retrieved via tools — exact bytes, no paraphrasing, no spelling corrections. (b) Set page to the exact number shown in the "--- PAGE N ---" header. (c) Never copy across page boundaries.
 - If the student asks about or references a topic on a different page (or if the teaching agenda leads you to a new page), and you want to jump/scroll the viewer to that page, set navigate_to_page to that page number.
 - When explaining abstract concepts, formulas, definitions, or visual steps, draw them on the blackboard by setting board_actions.
 
@@ -1376,6 +1133,19 @@ RESPONSE FORMAT: Respond as a valid JSON object with keys: speech, pdf_annotatio
                   : 'bg-surface-container-high text-on-surface-variant rounded-tl-none border border-outline-variant/10 shadow-sm'
               }`}
             >
+              {msg.role === 'assistant' && msg.thinking && (
+                <div className="mb-2 p-2 rounded-xl bg-primary/5 border border-primary/10 text-[10.5px] text-primary/80 font-mono space-y-1 select-text">
+                  <details className="outline-none group">
+                    <summary className="flex items-center gap-1 font-black uppercase tracking-wider text-[8px] text-primary cursor-pointer list-none select-none">
+                      <Brain className="w-3.5 h-3.5 group-open:animate-none" />
+                      <span>Thinking Process</span>
+                      <span className="text-[7.5px] text-outline font-normal lowercase ml-auto group-open:hidden">(click to expand)</span>
+                      <span className="text-[7.5px] text-outline font-normal lowercase ml-auto hidden group-open:inline">(click to collapse)</span>
+                    </summary>
+                    <div className="whitespace-pre-wrap leading-normal border-l border-primary/25 pl-2 mt-2 pt-1 text-on-surface-variant/90">{msg.thinking}</div>
+                  </details>
+                </div>
+              )}
               <div className="whitespace-pre-wrap select-text break-words space-y-1">
                 {renderStyledText(msg.content)}
               </div>
@@ -1402,7 +1172,29 @@ RESPONSE FORMAT: Respond as a valid JSON object with keys: speech, pdf_annotatio
           </div>
         ))}
 
-        {aiLoading && (
+        {aiLoading && (aiStreamingSpeech || aiThinking) && (
+          <div className="flex flex-col max-w-[85%] mr-auto items-start animate-in fade-in duration-200">
+            <div className="p-3 rounded-2xl text-xs leading-relaxed bg-surface-container-high text-on-surface-variant rounded-tl-none border border-outline-variant/10 shadow-sm">
+              {aiThinking && (
+                <div className="mb-2 p-2 rounded-xl bg-primary/5 border border-primary/10 text-[10.5px] text-primary/80 font-mono space-y-1 select-text">
+                  <div className="flex items-center gap-1 font-black uppercase tracking-wider text-[8px] text-primary">
+                    <Brain className="w-3.5 h-3.5 animate-pulse" />
+                    <span>Thinking Process</span>
+                  </div>
+                  <div className="whitespace-pre-wrap leading-normal border-l border-primary/25 pl-2 mt-1">{aiThinking}</div>
+                </div>
+              )}
+              {aiStreamingSpeech && (
+                <div className="whitespace-pre-wrap select-text break-words space-y-1">
+                  {renderStyledText(aiStreamingSpeech)}
+                </div>
+              )}
+            </div>
+            <span className="text-[8px] text-outline mt-1 px-1">Tutor is typing...</span>
+          </div>
+        )}
+
+        {aiLoading && !aiStreamingSpeech && !aiThinking && (
           <div className="mr-auto items-start max-w-[85%] flex gap-2 p-2">
             <div className="w-6 h-6 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
               <Loader2 className="w-3 h-3 animate-spin text-primary" />
@@ -1506,6 +1298,7 @@ RESPONSE FORMAT: Respond as a valid JSON object with keys: speech, pdf_annotatio
               { id: 'rag', label: 'RAG & Context' },
               { id: 'prompt', label: 'System Instruction' },
               { id: 'payload', label: 'LLM Payload' },
+              { id: 'thinking', label: 'Chain of Thought' },
               { id: 'response', label: 'JSON Response' }
             ].map((tab) => (
               <button
@@ -1808,6 +1601,31 @@ RESPONSE FORMAT: Respond as a valid JSON object with keys: speech, pdf_annotatio
                     <div className="h-full flex flex-col items-center justify-center text-center p-8 space-y-2 text-outline">
                       <Loader2 className="w-5 h-5 animate-spin text-primary" />
                       <p className="text-[10px]">LLM request payload will load once context retrieval completes.</p>
+                    </div>
+                  )
+                )}
+
+                {activeDebugTab === 'thinking' && (
+                  lastDebugInfo ? (
+                    <div className="space-y-3 flex flex-col h-full animate-in fade-in duration-150">
+                      <div className="flex justify-between items-center shrink-0">
+                        <h4 className="font-bold text-on-surface uppercase text-[9px] tracking-wider">AI Chain of Thought</h4>
+                        <button
+                          onClick={() => copyToClipboard(lastDebugInfo.responseRaw?.thinking || '')}
+                          className="flex items-center gap-1 py-1 px-2 rounded-lg text-[9px] font-black uppercase tracking-wide cursor-pointer bg-primary/10 border border-primary/20 text-primary hover:bg-primary hover:text-on-primary transition-all"
+                        >
+                          {copiedText ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
+                          {copiedText ? 'Copied' : 'Copy'}
+                        </button>
+                      </div>
+                      <pre className="flex-1 p-3 bg-surface text-on-surface-variant font-mono text-[10.5px] rounded-xl border border-outline-variant/10 whitespace-pre-wrap select-text leading-relaxed shadow-sm overflow-auto">
+                        {lastDebugInfo.responseRaw?.thinking || 'No thinking process was captured.'}
+                      </pre>
+                    </div>
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-8 space-y-2 text-outline">
+                      <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                      <p className="text-[10px]">Thinking process will load once response generation completes.</p>
                     </div>
                   )
                 )}

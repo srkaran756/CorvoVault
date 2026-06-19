@@ -199,7 +199,7 @@ export async function generateAIResponse(
         },
         body: JSON.stringify({
           model: model,
-          max_tokens: 1024,
+          max_tokens: 4096,
           system: systemInstruction,
           messages: chatMessages.map(m => ({
             role: m.role === 'assistant' ? 'assistant' : 'user',
@@ -240,6 +240,7 @@ const PROFESSOR_TOOL_SCHEMA = {
     type: 'object',
     required: ['speech'],
     properties: {
+      thinking: { type: 'string', description: 'The inner monologue or reasoning process. Use this to think step-by-step about what information is needed, evaluate current evidence, and plan annotations/board drawings before writing the speech.' },
       speech: { type: 'string', description: 'Teaching response. Markdown supported.' },
       pdf_annotations: {
         type: 'array',
@@ -282,10 +283,232 @@ const PROFESSOR_TOOL_SCHEMA = {
   }
 };
 
+export const RETRIEVAL_TOOLS = [
+  {
+    name: 'search_chunks',
+    description: 'NAVIGATION TOOL: Search the document index for references matching the semantic query. Returns references: { chunk_id, page, section, chapter_id }. You MUST call a Reading Tool (e.g. get_page, get_topic, get_section) on these references to retrieve full authoritative content before generating an answer.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The search query.' }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'get_page',
+    description: 'READING TOOL: Retrieve the full verbatim text of a specific page.',
+    parameters: {
+      type: 'object',
+      properties: {
+        page_number: { type: 'integer', description: 'The 1-indexed page number to read.' }
+      },
+      required: ['page_number']
+    }
+  },
+  {
+    name: 'get_page_range',
+    description: 'READING TOOL: Retrieve the full verbatim text of a range of pages (inclusive).',
+    parameters: {
+      type: 'object',
+      properties: {
+        start_page: { type: 'integer', description: 'The starting page number.' },
+        end_page: { type: 'integer', description: 'The ending page number.' }
+      },
+      required: ['start_page', 'end_page']
+    }
+  },
+  {
+    name: 'get_topic',
+    description: 'READING TOOL: Retrieve all content associated with the requested topic name.',
+    parameters: {
+      type: 'object',
+      properties: {
+        topic_name: { type: 'string', description: 'The topic name to read.' }
+      },
+      required: ['topic_name']
+    }
+  },
+  {
+    name: 'get_section',
+    description: 'READING TOOL: Retrieve all content associated with the requested section name or title.',
+    parameters: {
+      type: 'object',
+      properties: {
+        section_title: { type: 'string', description: 'The section name/title to read.' }
+      },
+      required: ['section_title']
+    }
+  },
+  {
+    name: 'get_chapter',
+    description: 'READING TOOL: Retrieve all content associated with the requested chapter ID or number (e.g. chapter_3 or 3).',
+    parameters: {
+      type: 'object',
+      properties: {
+        chapter_id: { type: 'string', description: 'The chapter ID or number to read.' }
+      },
+      required: ['chapter_id']
+    }
+  },
+  {
+    name: 'get_neighbor_pages',
+    description: 'READING TOOL: Retrieve the full text of pages surrounding a center page.',
+    parameters: {
+      type: 'object',
+      properties: {
+        page: { type: 'integer', description: 'Center page number.' },
+        before: { type: 'integer', description: 'Number of pages to read before the center page.' },
+        after: { type: 'integer', description: 'Number of pages to read after the center page.' }
+      },
+      required: ['page', 'before', 'after']
+    }
+  },
+  {
+    name: 'lookup_metadata',
+    description: 'NAVIGATION TOOL: Retrieve detailed metadata and boundaries for a specific chunk ID.',
+    parameters: {
+      type: 'object',
+      properties: {
+        chunk_id: { type: 'string', description: 'The chunk ID to look up.' }
+      },
+      required: ['chunk_id']
+    }
+  },
+  {
+    name: 'list_topics',
+    description: 'NAVIGATION TOOL: List all topics available in the document concept index along with their pages.',
+    parameters: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'list_sections',
+    description: 'NAVIGATION TOOL: List all unique section headings and chapters available in the document along with their pages.',
+    parameters: {
+      type: 'object',
+      properties: {}
+    }
+  }
+];
+
+async function executeRetrievalTool(
+  materialId: string | undefined,
+  toolName: string,
+  args: any
+): Promise<any> {
+  if (!materialId) {
+    return { error: 'No material ID was provided to run this tool.' };
+  }
+  const api = (window as any).electronAPI;
+  if (api && typeof api.invoke === 'function') {
+    try {
+      console.log(`[ai.ts] Executing retrieval tool via IPC: ${toolName}`, args);
+      return await api.invoke('professor:runRetrievalTool', materialId, toolName, args);
+    } catch (e: any) {
+      console.error(`[ai.ts] Retrieval tool execution failed:`, e);
+      return { error: e.message || 'Tool execution encountered an error.' };
+    }
+  }
+  return { error: 'Electron API invoke is not available in this environment.' };
+}
+
+export function repairJson(jsonStr: string): string {
+  let str = jsonStr.trim();
+  
+  // Find first '{'
+  const firstBrace = str.indexOf('{');
+  if (firstBrace === -1) return '{}';
+  str = str.substring(firstBrace);
+  
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  let repaired = '';
+  
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        repaired += char;
+      } else if (char === '\\') {
+        escaped = true;
+        repaired += char;
+      } else if (char === '"') {
+        inString = false;
+        repaired += char;
+      } else if (char === '\n' || char === '\r') {
+        repaired += '\\n';
+      } else {
+        repaired += char;
+      }
+    } else {
+      if (char === '"') {
+        inString = true;
+        repaired += char;
+      } else if (char === '{' || char === '[') {
+        stack.push(char);
+        repaired += char;
+      } else if (char === '}') {
+        if (stack.length > 0 && stack[stack.length - 1] === '{') {
+          stack.pop();
+        }
+        repaired += char;
+      } else if (char === ']') {
+        if (stack.length > 0 && stack[stack.length - 1] === '[') {
+          stack.pop();
+        }
+        repaired += char;
+      } else {
+        repaired += char;
+      }
+    }
+  }
+  
+  if (inString) {
+    if (escaped) {
+      repaired = repaired.slice(0, -1);
+    }
+    repaired += '"';
+  }
+  
+  // Clean up trailing commas, colons, or trailing keys
+  repaired = repaired.trim();
+  
+  // Strip trailing colon key patterns
+  repaired = repaired.replace(/,\s*"[^"]*"\s*:\s*$/, '');
+  repaired = repaired.replace(/\{\s*"[^"]*"\s*:\s*$/, '{');
+  
+  if (repaired.endsWith(',')) {
+    repaired = repaired.slice(0, -1);
+  }
+  
+  while (stack.length > 0) {
+    const last = stack.pop();
+    repaired = repaired.trim();
+    if (repaired.endsWith(',')) {
+      repaired = repaired.slice(0, -1);
+    }
+    if (last === '{') {
+      repaired += '}';
+    } else if (last === '[') {
+      repaired += ']';
+    }
+  }
+  
+  return repaired;
+}
+
 export async function generateProfessorResponse(
   config: AIServiceConfig,
   messages: ChatMessage[],
-  model?: string
+  model?: string,
+  materialId?: string,
+  onToolCall?: (toolName: string, args: any, result: any) => void,
+  onStream?: (chunk: { thinking?: string; speech?: string }) => void
 ): Promise<ProfessorResponse> {
   const provider = config.provider || 'gemini';
 
@@ -305,105 +528,307 @@ export async function generateProfessorResponse(
         parts: [{ text: m.content }]
       }));
 
-      const response = await ai.models.generateContent({
-        model: modelUsed,
-        contents: contents.length > 0 ? contents : 'Hello',
-        config: {
-          systemInstruction,
-          responseMimeType: 'application/json',
-          responseSchema: PROFESSOR_TOOL_SCHEMA.parameters as any
-        }
-      });
+      let iteration = 0;
+      const maxIterations = (config as any).maxAgentIterations ?? 8;
 
-      const text = response.text || '{}';
-      const result = normalizeProfessorResponse(safeParseJson(text));
-      result.modelNameUsed = modelUsed;
-      return result;
+      while (iteration < maxIterations) {
+        iteration++;
+        
+        // Use streaming if it's the final output round (or always for live text generation)
+        const responseStream = await ai.models.generateContentStream({
+          model: modelUsed,
+          contents: contents.length > 0 ? contents : 'Hello',
+          config: {
+            systemInstruction,
+            tools: [{
+              functionDeclarations: [
+                PROFESSOR_TOOL_SCHEMA,
+                ...RETRIEVAL_TOOLS
+              ] as any
+            }]
+          }
+        });
+
+        let hasFinalResponse = false;
+        let finalResponseArgs: any = null;
+        let functionCallsToExecute: any[] = [];
+        let accumulatedText = '';
+
+        for await (const chunk of responseStream) {
+          const fcList = chunk.functionCalls;
+          if (fcList && fcList.length > 0) {
+            for (const call of fcList) {
+              if (call.name === 'professor_response') {
+                hasFinalResponse = true;
+                if (call.args) {
+                  finalResponseArgs = call.args;
+                  if (onStream) {
+                    onStream({
+                      thinking: (call.args as any).thinking || '',
+                      speech: (call.args as any).speech || ''
+                    });
+                  }
+                }
+              } else {
+                functionCallsToExecute.push(call);
+              }
+            }
+          } else if (chunk.text) {
+            accumulatedText += chunk.text;
+            if (onStream) {
+              // Try parsing streaming raw JSON text if any, or stream text directly
+              try {
+                const repaired = JSON.parse(repairJson(accumulatedText));
+                onStream({
+                  thinking: repaired.thinking || '',
+                  speech: repaired.speech || ''
+                });
+              } catch {
+                onStream({
+                  speech: accumulatedText
+                });
+              }
+            }
+          }
+        }
+
+        if (functionCallsToExecute.length > 0) {
+          // Push model turn containing tool calls to contents
+          contents.push({
+            role: 'model',
+            parts: functionCallsToExecute.map(call => ({
+              functionCall: {
+                name: call.name,
+                args: call.args
+              }
+            })) as any
+          } as any);
+
+          const userParts: any[] = [];
+          for (const call of functionCallsToExecute) {
+            const toolResult = await executeRetrievalTool(materialId, call.name, call.args);
+            if (onToolCall) {
+              onToolCall(call.name, call.args, toolResult);
+            }
+            userParts.push({
+              functionResponse: {
+                name: call.name,
+                response: { output: toolResult }
+              }
+            });
+          }
+
+          // Push user turn containing tool responses to contents
+          contents.push({
+            role: 'user',
+            parts: userParts
+          });
+        } else if (hasFinalResponse && finalResponseArgs) {
+          const result = normalizeProfessorResponse(finalResponseArgs);
+          result.modelNameUsed = modelUsed;
+          return result;
+        } else {
+          const result = normalizeProfessorResponse(safeParseJson(accumulatedText || '{}'));
+          result.modelNameUsed = modelUsed;
+          return result;
+        }
+      }
+      throw new Error(`Agent reached maximum research limit (${maxIterations} steps) without final response.`);
     } catch (err: any) {
-      console.warn('[Professor] Gemini structured call failed, falling back:', err.message);
+      console.warn('[Professor] Gemini agent call failed, falling back:', err.message);
       return await tryJsonPromptFallback(config, messages, modelUsed);
     }
   }
 
   if (provider === 'openai' || provider === 'openrouter') {
     try {
-      return await tryFunctionCalling(config, messages, model);
+      const key = provider === 'openrouter' ? config.openrouterKey : config.openaiKey;
+      const baseUrl = provider === 'openrouter'
+        ? 'https://openrouter.ai/api/v1/chat/completions'
+        : 'https://api.openai.com/v1/chat/completions';
+      
+      const modelUsed = model || (provider === 'openrouter' ? 'meta-llama/llama-3.3-70b-instruct:free' : 'gpt-4o-mini');
+
+      let loopMessages = messages.map(m => ({
+        role: m.role,
+        content: m.content,
+        tool_calls: undefined as any,
+        tool_call_id: undefined as any,
+        name: undefined as any
+      }));
+
+      let iteration = 0;
+      const maxIterations = (config as any).maxAgentIterations ?? 8;
+
+      while (iteration < maxIterations) {
+        iteration++;
+        const res = await fetch(baseUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+          body: JSON.stringify({
+            model: modelUsed,
+            messages: loopMessages,
+            max_tokens: 2500,
+            tools: [
+              { type: 'function', function: PROFESSOR_TOOL_SCHEMA },
+              ...RETRIEVAL_TOOLS.map(t => ({ type: 'function', function: t }))
+            ],
+            tool_choice: 'auto',
+            stream: true
+          })
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error('Response body reader is not available');
+
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let accumulatedArgs = '';
+        let isProfessorResponseActive = false;
+        let streamedToolCalls: any[] = [];
+        let accumulatedText = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const cleanLine = line.trim();
+            if (!cleanLine || cleanLine === 'data: [DONE]') continue;
+            if (cleanLine.startsWith('data: ')) {
+              try {
+                const parsed = JSON.parse(cleanLine.slice(6));
+                const choice = parsed.choices?.[0];
+                const delta = choice?.delta;
+
+                if (delta?.content) {
+                  accumulatedText += delta.content;
+                  if (onStream) {
+                    try {
+                      const repaired = JSON.parse(repairJson(accumulatedText));
+                      onStream({
+                        thinking: repaired.thinking || '',
+                        speech: repaired.speech || ''
+                      });
+                    } catch {
+                      onStream({
+                        speech: accumulatedText
+                      });
+                    }
+                  }
+                }
+
+                if (delta?.tool_calls) {
+                  for (const tc of delta.tool_calls) {
+                    const idx = tc.index;
+                    if (!streamedToolCalls[idx]) {
+                      streamedToolCalls[idx] = {
+                        id: tc.id || '',
+                        type: 'function',
+                        function: { name: tc.function?.name || '', arguments: '' }
+                      };
+                    }
+                    if (tc.id) {
+                      streamedToolCalls[idx].id = tc.id;
+                    }
+                    if (tc.function?.name) {
+                      streamedToolCalls[idx].function.name = tc.function.name;
+                      if (tc.function.name === 'professor_response') {
+                        isProfessorResponseActive = true;
+                      }
+                    }
+                    if (tc.function?.arguments) {
+                      streamedToolCalls[idx].function.arguments += tc.function.arguments;
+                      if (isProfessorResponseActive) {
+                        accumulatedArgs += tc.function.arguments;
+                        if (onStream) {
+                          try {
+                            const repaired = JSON.parse(repairJson(accumulatedArgs));
+                            onStream({
+                              thinking: repaired.thinking || '',
+                              speech: repaired.speech || ''
+                            });
+                          } catch {
+                            // ignore parsing errors on partial strings
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              } catch {
+                // ignore JSON parse error on incomplete chunks
+              }
+            }
+          }
+        }
+
+        const validToolCalls = streamedToolCalls.filter(Boolean);
+
+        if (validToolCalls.length > 0) {
+          loopMessages.push({
+            role: 'assistant',
+            content: accumulatedText || null,
+            tool_calls: validToolCalls.map(tc => ({
+              id: tc.id,
+              type: 'function',
+              function: {
+                name: tc.function.name,
+                arguments: tc.function.arguments
+              }
+            }))
+          } as any);
+
+          let hasFinalResponse = false;
+          let finalResponseArgs: any = null;
+
+          for (const toolCall of validToolCalls) {
+            const name = toolCall.function.name;
+            const argsText = toolCall.function.arguments;
+            let args = {};
+            try { args = JSON.parse(argsText); } catch {}
+
+            if (name === 'professor_response') {
+              hasFinalResponse = true;
+              finalResponseArgs = args;
+            } else {
+              const toolResult = await executeRetrievalTool(materialId, name, args);
+              if (onToolCall) {
+                onToolCall(name, args, toolResult);
+              }
+              loopMessages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: name,
+                content: JSON.stringify(toolResult)
+              } as any);
+            }
+          }
+
+          if (hasFinalResponse && finalResponseArgs) {
+            const result = normalizeProfessorResponse(finalResponseArgs);
+            result.modelNameUsed = modelUsed;
+            return result;
+          }
+        } else {
+          const result = normalizeProfessorResponse(safeParseJson(accumulatedText || '{}'));
+          result.modelNameUsed = modelUsed;
+          return result;
+        }
+      }
+      throw new Error(`Agent reached maximum research limit (${maxIterations} steps) without final response.`);
     } catch (err: any) {
-      console.warn('[Professor] Function calling failed, trying JSON prompt fallback:', err.message);
+      console.warn('[Professor] OpenAI/OpenRouter agent call failed, trying JSON prompt fallback:', err.message);
       return await tryJsonPromptFallback(config, messages, model);
     }
   }
 
   return await tryJsonPromptFallback(config, messages, model);
-}
-
-async function tryFunctionCalling(
-  config: AIServiceConfig,
-  messages: ChatMessage[],
-  model?: string
-): Promise<ProfessorResponse> {
-  const provider = config.provider;
-  const key = provider === 'openrouter' ? config.openrouterKey : config.openaiKey;
-  const baseUrl = provider === 'openrouter'
-    ? 'https://openrouter.ai/api/v1/chat/completions'
-    : 'https://api.openai.com/v1/chat/completions';
-
-  let finalModelUsed = '';
-  const makeCall = async (modelName: string) => {
-    const res = await fetch(baseUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-      body: JSON.stringify({
-        model: modelName,
-        messages: messages.map(m => ({ role: m.role, content: m.content })),
-        max_tokens: 2500,
-        tools: [{ type: 'function', function: PROFESSOR_TOOL_SCHEMA }],
-        tool_choice: { type: 'function', function: { name: 'professor_response' } }
-      })
-    });
-
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const args = data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
-    if (!args) throw new Error('No tool call in response');
-
-    // Filter out Nvidia Content Safety dummy response in tool arguments
-    if (args.includes("User Safety:") && args.includes("Response Safety:") && args.length < 150) {
-      throw new Error("Content safety moderation dummy response detected.");
-    }
-
-    finalModelUsed = modelName;
-    const result = normalizeProfessorResponse(safeParseJson(args));
-    result.modelNameUsed = finalModelUsed;
-    return result;
-  };
-
-  const startModel = model || (provider === 'openrouter' ? 'meta-llama/llama-3.3-70b-instruct:free' : 'gpt-4o-mini');
-
-  if (provider === 'openrouter') {
-    try {
-      return await makeCall(startModel);
-    } catch (err: any) {
-      console.warn(`[OpenRouter] Function call failed for ${startModel}, trying fallbacks:`, err.message);
-      const fallbacks = [
-        'meta-llama/llama-3.1-8b-instruct:free',
-        'qwen/qwen3-coder:free',
-        'openrouter/free'
-      ];
-      for (const fallbackModel of fallbacks) {
-        if (fallbackModel === startModel) continue;
-        try {
-          console.log(`[OpenRouter] Retrying function call with fallback model: ${fallbackModel}`);
-          return await makeCall(fallbackModel);
-        } catch (retryErr: any) {
-          console.warn(`[OpenRouter] Function call fallback ${fallbackModel} failed:`, retryErr.message);
-        }
-      }
-      throw err;
-    }
-  } else {
-    return await makeCall(startModel);
-  }
 }
 
 async function tryJsonPromptFallback(
@@ -413,6 +838,7 @@ async function tryJsonPromptFallback(
 ): Promise<ProfessorResponse> {
   const jsonInstruction = `\n\nIMPORTANT: Your ENTIRE response must be a single valid JSON object following this schema:
 {
+  "thinking": "optional inner monologue / step-by-step reasoning",
   "speech": "teaching message content here",
   "pdf_annotations": [
     { "type": "highlight", "page": 1, "targetText": "text to highlight", "color": "orange", "callout": "optional label" }
@@ -443,6 +869,7 @@ async function tryJsonPromptFallback(
 
 function normalizeProfessorResponse(parsed: any): ProfessorResponse {
   return {
+    thinking: typeof parsed?.thinking === 'string' ? parsed.thinking : (parsed?.thinking ? JSON.stringify(parsed.thinking) : undefined),
     speech: typeof parsed?.speech === 'string' ? parsed.speech : (parsed?.speech ? JSON.stringify(parsed.speech) : 'No speech response.'),
     pdf_annotations: Array.isArray(parsed?.pdf_annotations) ? parsed.pdf_annotations : [],
     board_actions: Array.isArray(parsed?.board_actions) ? parsed.board_actions : [],
@@ -454,24 +881,27 @@ function normalizeProfessorResponse(parsed: any): ProfessorResponse {
 
 function safeParseJson(text: string): any {
   if (!text || !text.trim()) {
-    throw new Error('Received an empty response from the AI model.');
+    return { speech: 'Received an empty response from the AI model.' };
   }
   const cleaned = text.replace(/```json|```/g, '').trim();
-  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error(`No JSON object found in LLM response. Raw response: "${text.slice(0, 500)}"`);
+  
+  const firstBrace = cleaned.indexOf('{');
+  if (firstBrace === -1) {
+    return { speech: text };
   }
+  
+  // Try normal parse first
   try {
-    return JSON.parse(jsonMatch[0]);
+    return JSON.parse(cleaned.substring(firstBrace));
   } catch (err: any) {
-    const posMatch = err.message.match(/position (\d+)/);
-    let errorContext = '';
-    if (posMatch) {
-      const pos = parseInt(posMatch[1], 10);
-      const start = Math.max(0, pos - 60);
-      const end = Math.min(jsonMatch[0].length, pos + 60);
-      errorContext = ` Context around error: "...${jsonMatch[0].slice(start, pos)}[ERROR HERE]${jsonMatch[0].slice(pos, end)}..."`;
+    // Attempt repair
+    try {
+      console.warn('[safeParseJson] Normal JSON parsing failed, attempting repairJson...', err.message);
+      const repaired = repairJson(cleaned);
+      return JSON.parse(repaired);
+    } catch (repairErr: any) {
+      console.warn('[safeParseJson] JSON parsing and repair failed, falling back to plain text wrapping.');
+      return { speech: text };
     }
-    throw new Error(`Failed to parse JSON object: ${err.message}.${errorContext} Raw response: "${text.slice(0, 3000)}"`);
   }
 }

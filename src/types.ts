@@ -186,6 +186,7 @@ export interface BoardAction {
 }
 
 export interface ProfessorResponse {
+  thinking?: string;
   speech: string;
   pdf_annotations: PdfAnnotation[];
   board_actions: BoardAction[];

@@ -662,8 +662,8 @@ export class ProfessorService {
       }
     }
 
-    // 4. Context Window Expansion (Stage 4)
-    const relevantChunks = await this.expandChunkContexts(materialId, rawRelevantChunks);
+    // 4. Context Window Expansion (Stage 4) - Simplified to direct RAG chunks (locator role)
+    const relevantChunks = rawRelevantChunks;
 
     // Calculate quality metrics
     const latencyMs = Date.now() - startTime;
@@ -1145,6 +1145,197 @@ export class ProfessorService {
        WHERE material_id = ? AND status IN ('done', 'failed')`
     ).run(materialId);
     this.markIngestionStatus(materialId, 'not_started');
+    this.db.prepare("UPDATE concept_index SET index_json = '{}' WHERE material_id = ?").run(materialId);
+  }
+
+  // ─── Agentic Hierarchical Retrieval Tools ───────────────────────────────────
+
+  async search_chunks(materialId: string, query: string, limit: number = 8): Promise<any[]> {
+    const candidates = this.db.prepare(
+      `SELECT *, embedding FROM document_chunks WHERE material_id = ? AND is_toc = 0`
+    ).all(materialId) as any[];
+    if (candidates.length === 0) return [];
+    
+    const ranked = await this.rankHybrid(materialId, query, candidates, 1, limit);
+    return ranked.map(c => ({
+      chunk_id: c.chunk_id,
+      page: c.page,
+      section: c.section,
+      chapter_id: c.chapter_id
+    }));
+  }
+
+  get_page(materialId: string, pageNumber: number): any[] {
+    return this.db.prepare(
+      `SELECT chunk_id, page, section, chapter_id, text 
+       FROM document_chunks 
+       WHERE material_id = ? AND page = ? AND is_toc = 0 
+       ORDER BY chunk_order`
+    ).all(materialId, pageNumber);
+  }
+
+  get_page_range(materialId: string, startPage: number, endPage: number): any[] {
+    return this.db.prepare(
+      `SELECT chunk_id, page, section, chapter_id, text 
+       FROM document_chunks 
+       WHERE material_id = ? AND page BETWEEN ? AND ? AND is_toc = 0 
+       ORDER BY chunk_order`
+    ).all(materialId, startPage, endPage);
+  }
+
+  get_topic(materialId: string, topicName: string): any[] {
+    const conceptIndex = this.getConceptIndex(materialId);
+    if (!conceptIndex || !Array.isArray(conceptIndex.topics)) {
+      return [];
+    }
+    const topic = conceptIndex.topics.find((t: any) => 
+      (t.name || '').toLowerCase().includes(topicName.toLowerCase()) ||
+      (t.title || '').toLowerCase().includes(topicName.toLowerCase())
+    );
+    if (!topic) {
+      return [];
+    }
+    const start = topic.page;
+    const end = topic.endPage ?? topic.page;
+    return this.get_page_range(materialId, start, end);
+  }
+
+  get_section(materialId: string, sectionTitle: string): any[] {
+    const normalized = sectionTitle.toLowerCase();
+    const slug = this.slugify(sectionTitle);
+    return this.db.prepare(
+      `SELECT chunk_id, page, section, chapter_id, text 
+       FROM document_chunks 
+       WHERE material_id = ? AND (LOWER(section) LIKE ? OR chapter_id = ? OR chapter_id LIKE ?) AND is_toc = 0 
+       ORDER BY chunk_order`
+    ).all(materialId, `%${normalized}%`, slug, `%${slug}%`);
+  }
+
+  get_chapter(materialId: string, chapterId: string): any[] {
+    let cleanId = chapterId.toLowerCase();
+    if (!cleanId.startsWith('chapter_') && /^\d+$/.test(cleanId)) {
+      cleanId = `chapter_${cleanId}`;
+    }
+
+    const directChunks = this.db.prepare(
+      `SELECT chunk_id, page, section, chapter_id, text 
+       FROM document_chunks 
+       WHERE material_id = ? AND chapter_id = ? AND is_toc = 0 
+       ORDER BY chunk_order`
+    ).all(materialId, cleanId);
+
+    if (directChunks.length > 0) {
+      return directChunks;
+    }
+
+    const headings = this.db.prepare(
+      "SELECT page, text FROM document_chunks WHERE material_id = ? AND chunk_type = 'heading' AND is_toc = 0 ORDER BY chunk_order"
+    ).all(materialId) as Array<{ page: number; text: string }>;
+
+    const majorHeadings = headings.filter(h => this.isMajorHeading(h.text));
+    if (majorHeadings.length === 0) return [];
+
+    let startPage = -1;
+    let endPage = -1;
+
+    const numMatch = cleanId.match(/\d+/);
+    const num = numMatch ? numMatch[0] : '';
+
+    for (let i = 0; i < majorHeadings.length; i++) {
+      const cur = majorHeadings[i];
+      const matchNum = cur.text.match(/\bchapter\s*0*(\d+)\b/i) || cur.text.match(/^0*(\d+)\b/i);
+      const isMatch = matchNum ? matchNum[1] === num : false;
+
+      if (isMatch || cur.text.toLowerCase().includes(cleanId)) {
+        startPage = cur.page;
+        const next = majorHeadings[i + 1];
+        endPage = next ? next.page - 1 : 999999;
+        break;
+      }
+    }
+
+    if (startPage !== -1) {
+      return this.get_page_range(materialId, startPage, endPage);
+    }
+
+    return [];
+  }
+
+  get_neighbor_pages(materialId: string, page: number, before: number, after: number): any[] {
+    const start = Math.max(1, page - before);
+    const end = page + after;
+    return this.get_page_range(materialId, start, end);
+  }
+
+  lookup_metadata(materialId: string, chunkId: string): any[] {
+    return this.db.prepare(
+      `SELECT chunk_id, page, section, chapter_id, text, bbox_x, bbox_y, bbox_w, bbox_h 
+       FROM document_chunks 
+       WHERE material_id = ? AND chunk_id = ?`
+    ).all(materialId, chunkId);
+  }
+
+  list_topics(materialId: string): any[] {
+    const conceptIndex = this.getConceptIndex(materialId);
+    if (!conceptIndex || !Array.isArray(conceptIndex.topics)) {
+      return [];
+    }
+    return conceptIndex.topics.map((t: any) => ({
+      name: t.name || t.title || '',
+      start_page: t.page,
+      end_page: t.endPage ?? t.page
+    }));
+  }
+
+  list_sections(materialId: string): any[] {
+    const headings = this.db.prepare(
+      `SELECT DISTINCT section, chapter_id, page 
+       FROM document_chunks 
+       WHERE material_id = ? AND chunk_type = 'heading' AND is_toc = 0 
+       ORDER BY chunk_order`
+    ).all(materialId) as any[];
+    return headings.map(h => ({
+      title: h.section,
+      chapter_id: h.chapter_id,
+      page: h.page
+    }));
+  }
+
+  async runRetrievalTool(
+    materialId: string,
+    toolName: string,
+    args: any
+  ): Promise<any> {
+    console.log(`[ProfessorService] Executing retrieval tool: ${toolName}`, args);
+    try {
+      switch (toolName) {
+        case 'search_chunks':
+          return await this.search_chunks(materialId, args.query);
+        case 'get_page':
+          return this.get_page(materialId, Number(args.page_number));
+        case 'get_page_range':
+          return this.get_page_range(materialId, Number(args.start_page), Number(args.end_page));
+        case 'get_topic':
+          return this.get_topic(materialId, args.topic_name);
+        case 'get_section':
+          return this.get_section(materialId, args.section_title);
+        case 'get_chapter':
+          return this.get_chapter(materialId, String(args.chapter_id));
+        case 'get_neighbor_pages':
+          return this.get_neighbor_pages(materialId, Number(args.page), Number(args.before), Number(args.after));
+        case 'lookup_metadata':
+          return this.lookup_metadata(materialId, args.chunk_id);
+        case 'list_topics':
+          return this.list_topics(materialId);
+        case 'list_sections':
+          return this.list_sections(materialId);
+        default:
+          throw new Error(`Unknown retrieval tool: ${toolName}`);
+      }
+    } catch (err: any) {
+      console.error(`[ProfessorService] Tool ${toolName} failed:`, err);
+      return { error: err.message };
+    }
   }
 }
 

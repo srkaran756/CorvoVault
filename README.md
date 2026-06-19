@@ -23,7 +23,7 @@ CorvoVault is a local-first desktop application built to support the journey of 
 - Track YouTube video watch progress
 - Browse the web inside the app in an isolated session
 - Search the web for PDFs and download them directly into the vault
-- Chat with an AI tutor about the document you are reading (requires your own API key)
+- Chat with an AI tutor about the document you are reading (requires your own API key) — *Experimental / Explorer Feature*
 - View a study dashboard with time-tracked activity, heatmap, and usage stats
 - Multiple local profiles on one installation, each with its own vault, settings, and theme
 
@@ -98,6 +98,7 @@ Migration scripts run automatically on startup. The migration runner (`electron/
 ## Notes to Others
 
 - Ignore the dashboard for now, because I'm planning something different for that.
+- **AI Tutor & RAG Chat**: This feature is highly experimental and exploratory. The local-first vector RAG pipeline and remote LLM agentic tool-use loops contain rough edges (such as tool execution compliance, page number hallucinations, context window limits, and fallback JSON parsing). Expect inconsistencies—it is currently just an experiment.
 - If you want to work as a team and improve this (not just fixing some bugs), you can personally email me at kshivamraj756@gmail.com or WhatsApp me at 7970704703.
 
 ## Contributing

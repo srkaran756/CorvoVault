@@ -9,11 +9,13 @@ import { isTOCPage } from './tocDetector';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 
 // ─── CHUNKER CONSTANTS ─────────────────────────────────────────────────────
-// all-MiniLM-L6-v2 has a 256-token limit ≈ 800 chars.
-// We cap at 750 to stay safely inside that window.
-const CHUNK_MAX_CHARS = 750;
+const EMBEDDING_TOKEN_LIMIT = 256;
+const TARGET_TOKEN_USAGE = 0.5;
+const CHUNK_SIZE = EMBEDDING_TOKEN_LIMIT * TARGET_TOKEN_USAGE * 4; // 512 chars
+const CHUNK_OVERLAP = 64;
+
+const CHUNK_MAX_CHARS = Math.round(CHUNK_SIZE * 1.5); // 768 chars max cap
 const CHUNK_MIN_CHARS = 15;
-const CHUNK_FLUSH_CHARS = 500; // soft flush threshold for paragraph grouping
 const COLUMN_GAP_THRESHOLD = 0.05; // 5% of page width = column boundary
 
 // ─── TYPES ─────────────────────────────────────────────────────────────────
@@ -71,6 +73,13 @@ export class IngestionQueue {
     this.professorService.markIngestionStatus(materialId, 'queued');
 
     // Start processing if not already running
+    if (!this.isProcessing) {
+      setImmediate(() => this.processNext());
+    }
+  }
+
+  // Trigger queue execution if idle
+  triggerProcessing(): void {
     if (!this.isProcessing) {
       setImmediate(() => this.processNext());
     }
@@ -217,22 +226,38 @@ export class IngestionQueue {
   private isHeadingLine(line: string): boolean {
     const trimmed = line.trim();
     if (trimmed.length < 3) return false;
-    if (trimmed.length > 200) return false; // was 80 in V2 — too restrictive
+    if (trimmed.length > 100) return false; // Headings are rarely > 100 characters
 
-    // Chapter patterns (case-insensitive)
-    if (/^Chapter\s+\d+/i.test(trimmed)) return true;
-    if (/^CHAPTER\s+\d+/i.test(trimmed)) return true;
-    if (/^Part\s+\w+/i.test(trimmed)) return true;
+    // 1. Chapter/Part patterns
+    // Exclude sentences starting with "Chapter X" in normal paragraphs
+    if (/^(?:Chapter|CHAPTER|Part)\s+\w+/i.test(trimmed)) {
+      const rest = trimmed.replace(/^(?:Chapter|CHAPTER|Part)\s+\w+[:\-\s]*/i, '').trim();
+      if (rest.length === 0) return true;
+      const proseVerbs = /\b(will|shall|should|would|could|can|is|are|was|were|has|have|had|do|does|did|go|goes|went|described|pointed|introduced|argued|discuss|deals|shows|about|manifests|indicates|explains|defines|represents|focuses|argues|postponed|written|delayed|iterative|manifests|manifest|manifested)\b/i;
+      return !proseVerbs.test(rest);
+    }
 
-    // Numbered sections: "1. Introduction", "2.3 Methods", "A.1 Appendix"
-    if (/^\d+(?:\.\d+)*[\.\s]/.test(trimmed)) return true;
-    if (/^[A-Z]\.\d+[\.\s]/.test(trimmed)) return true;
+    // 2. Numbered sections: "1. Introduction", "2.3 Methods", "A.1 Appendix"
+    // Exclude numbered list items like "1. The format of messages..."
+    if (/^(?:[A-Z]|\d+(?:\.\d+)*)[\.\s]+/i.test(trimmed)) {
+      const rest = trimmed.replace(/^(?:[A-Z]|\d+(?:\.\d+)*)[\.\s]+/i, '').trim();
+      if (rest.length === 0) return false;
+      if (rest.length > 80) return false;
+      if (trimmed.endsWith('.')) return false;
+      const proseVerbs = /\b(will|shall|should|would|could|can|is|are|was|were|has|have|had|do|does|did|go|goes|went|described|pointed|introduced|argued|discuss|deals|shows|about|manifests|indicates|explains|defines|represents|focuses|argues|postponed|written|delayed|iterative|manifests|manifest|manifested|sends|sends to|falls|work together|works|work|working|working obvious|iterative and incremental)\b/i;
+      return !proseVerbs.test(rest);
+    }
 
-    // Known academic headings (at line start)
-    if (/^(Abstract|Introduction|Conclusion|Summary|References|Bibliography|Appendix|Acknowledgements?|Methods?|Results?|Discussion|Background|Overview)\b/i.test(trimmed)) return true;
+    // 3. Known academic headings (case-sensitive TitleCase only to prevent matching lowercase prose words)
+    if (/^(Abstract|Introduction|Conclusion|Summary|References|Bibliography|Appendix|Acknowledgements?|Methods?|Results?|Discussion|Background|Overview)\b/.test(trimmed)) {
+      if (trimmed.length > 40) return false; // Academic headings are very short
+      return true;
+    }
 
-    // ALL CAPS lines (but not short ones that could be acronyms)
-    if (trimmed.length >= 5 && /^[A-Z0-9\s\-–:,]+$/.test(trimmed)) return true;
+    // 4. ALL CAPS lines (excluding acronyms or very long sentences)
+    if (trimmed.length >= 5 && trimmed.length <= 60 && /^[A-Z0-9\s\-–:,]+$/.test(trimmed)) {
+      return true;
+    }
 
     return false;
   }
@@ -345,8 +370,8 @@ export class IngestionQueue {
     // chunkSize=512 chars (~400 words) fits comfortably within all-MiniLM-L6-v2's
     // 256-token limit. chunkOverlap=64 chars preserves sentence context at boundaries.
     const splitter = new RecursiveCharacterTextSplitter({
-      chunkSize: 512,
-      chunkOverlap: 64,
+      chunkSize: CHUNK_SIZE,
+      chunkOverlap: CHUNK_OVERLAP,
       separators: ['\n\n', '\n', '. ', ' '],
     });
 
