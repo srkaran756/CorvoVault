@@ -1572,3 +1572,5 @@ Reality: the app ingests the PDF into chunks first, then retrieves relevant chun
 Mistake: thinking embeddings and LLM answers are the same thing.
 
 Reality: embeddings are local numeric representations for search. LLM answers come from remote provider APIs using the user's key.
+
+I created a new branch to fix the chunking function. and here is what I found.
