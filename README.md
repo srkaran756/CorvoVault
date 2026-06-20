@@ -99,7 +99,7 @@ Migration scripts run automatically on startup. The migration runner (`electron/
 
 - Ignore the dashboard for now, because I'm planning something different for that.
 - **AI Tutor & RAG Chat**: This feature is highly experimental and exploratory. The local-first vector RAG pipeline and remote LLM agentic tool-use loops contain rough edges (such as tool execution compliance, page number hallucinations, context window limits, and fallback JSON parsing). Expect inconsistencies—it is currently just an experiment.
-- If you want to work as a team and improve this (not just fixing some bugs), you can personally email me at kshivamraj756@gmail.com or WhatsApp me at 7970704703 and just say - hey npm run build togather.
+- If you want to work as a team and improve this (not just fixing some bugs), you can personally email me at kshivamraj756@gmail.com - hey npm run build togather.
 
 ## Contributing
 
