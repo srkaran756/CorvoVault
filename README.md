@@ -35,23 +35,7 @@ Learning is not linear—it spans across PDFs, research papers, online courses, 
 
 ---
 
-## 📸 Interface Preview
-
-<div align="center">
-
-| **Knowledge Vault & Course Workspaces** |
-|:---:|
-| <img src="docs/screenshots/vault.png" alt="CorvoVault Main Workspace" width="100%" style="border-radius: 8px;" /> |
-| *Organize study tracks, topics, documents, notes, and course resources in a single unified dashboard.* |
-
-<br />
-
-| **Custom PDF Reader & Annotations** | **Contextual AI Tutor & Research RAG** |
-|:---:|:---:|
-| <img src="docs/screenshots/pdf_reader_cover.png" alt="PDF Reader" width="100%" style="border-radius: 8px;" /> | <img src="docs/screenshots/pdf_reader_highlight.png" alt="AI Research Assistant" width="100%" style="border-radius: 8px;" /> |
-| *High-speed document viewer with reading filters, highlight management, and freehand markup.* | *Deep hybrid semantic search (BM25 + `sqlite-vec`) for intelligent contextual Q&A.* |
-
-</div>
+> <sub>*Updated screenshots and UI walkthroughs for the latest release will be uploaded here soon.*</sub>
 
 ---
 
