@@ -39,7 +39,7 @@ jobs:
         run: npm run typecheck:electron
 
       - name: Run Unit Tests
-        run: npm test
+        run: npm run test:rebuild
 
       - name: Verify Vite Build
         run: npm run build
