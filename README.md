@@ -1,6 +1,6 @@
 <div align="center">
 
-  <img src="docs/screenshots/banner.png" alt="CorvoVault Banner" width="700" />
+  <img src="docs/screenshots/banner.png" alt="CorvoVault Banner" width="100%" />
 
   # CorvoVault
 
