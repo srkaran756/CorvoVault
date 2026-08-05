@@ -39,6 +39,13 @@ Learning is not linear—it spans across PDFs, research papers, online courses, 
 
 <div align="center">
 
+| **Custom High-Performance PDF Reader & Annotations** |
+|:---:|
+| <img src="docs/screenshots/pdf_reader.png" alt="Custom PDF Reader & Annotations" width="100%" /> |
+| *Ergonomic document reader with reading modes (Sepia/Night), text selection, highlights, and side-by-side Note Panel.* |
+
+<br />
+
 | **Knowledge Vault & Resource Hierarchy** | **Standalone Notes Studio (Markdown & KaTeX)** |
 |:---:|:---:|
 | <img src="docs/screenshots/vault.png" alt="Knowledge Vault" width="100%" /> | <img src="docs/screenshots/notes.png" alt="Notes Studio" width="100%" /> |
