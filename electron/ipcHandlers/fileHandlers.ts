@@ -1,4 +1,4 @@
-import { app, ipcMain } from 'electron';
+import { app, ipcMain, net } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -7,6 +7,7 @@ import archiver from 'archiver';
 import { getDb } from '../db/connection';
 import { enqueueDocxConversion } from '../infrastructure/docxPreview';
 import { toLocalFilePath, assertInsideUserData } from '../utils/pathUtils';
+import { computeFileHash, encryptBuffer, decryptBuffer } from '../utils/cryptoUtils';
 
 export function registerFileHandlers() {
   // Copy file to app's local data directory
@@ -37,8 +38,10 @@ export function registerFileHandlers() {
     const fileName = path.basename(sourcePath);
     const destPath = path.join(filesDir, `${Date.now()}_${fileName}`);
     // destPath is always inside userData by construction — no traversal possible
-    fs.copyFileSync(sourcePath, destPath);
-    const { size } = fs.statSync(destPath);
+    const raw = fs.readFileSync(sourcePath);
+    const encrypted = encryptBuffer(raw);
+    fs.writeFileSync(destPath, encrypted);
+    const size = encrypted.length;
     return { localPath: destPath, fileName, size };
   });
 
@@ -74,12 +77,53 @@ export function registerFileHandlers() {
     }
   });
 
-  // Read file as base64 (for thumbnails, etc)
+  // Read file as base64 (for thumbnails, etc. and remote URLs to bypass CORS)
   ipcMain.handle('file:readBase64', async (_event, filePath: string) => {
+    if (typeof filePath === 'string' && /^(https?:)/i.test(filePath)) {
+      // Use Electron's net.request which shares the session cookies from the
+      // webview (e.g. university login), bypassing CORS entirely.
+      return new Promise<string | null>((resolve) => {
+        const chunks: Buffer[] = [];
+        let contentType = 'application/pdf';
+        try {
+          const req = net.request({ url: filePath, useSessionCookies: true });
+          req.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CorvoVault/1.0');
+          req.on('response', (res) => {
+            contentType = (res.headers['content-type'] as string) || 'application/pdf';
+            // Normalize content-type: strip charset suffix
+            if (contentType.includes(';')) contentType = contentType.split(';')[0].trim();
+            res.on('data', (chunk: Buffer) => chunks.push(chunk));
+            res.on('end', () => {
+              const base64 = Buffer.concat(chunks).toString('base64');
+              resolve(`data:${contentType};base64,${base64}`);
+            });
+            res.on('error', (err: Error) => {
+              console.error('[file:readBase64] net.request response error:', err.message);
+              resolve(null);
+            });
+          });
+          req.on('error', (err) => {
+            console.error('[file:readBase64] net.request error:', err.message);
+            resolve(null);
+          });
+          req.end();
+        } catch (err: any) {
+          console.error('[file:readBase64] Failed to setup net.request:', err.message);
+          resolve(null);
+        }
+      });
+    }
+
     filePath = toLocalFilePath(filePath);
     assertInsideUserData(filePath);
     if (!fs.existsSync(filePath)) return null;
     const data = fs.readFileSync(filePath);
+    let decrypted: Buffer;
+    try {
+      decrypted = decryptBuffer(data);
+    } catch {
+      decrypted = data; // fallback for unencrypted legacy files
+    }
     const ext = path.extname(filePath).toLowerCase();
     const mimeMap: Record<string, string> = {
       '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -87,7 +131,7 @@ export function registerFileHandlers() {
       '.pdf': 'application/pdf',
     };
     const mime = mimeMap[ext] || 'application/octet-stream';
-    return `data:${mime};base64,${data.toString('base64')}`;
+    return `data:${mime};base64,${decrypted.toString('base64')}`;
   });
 
   // Get local file path for the user data directory — only allowlisted keys
@@ -119,19 +163,9 @@ export function registerFileHandlers() {
   ipcMain.handle('file:hashFile', async (_event, filePath: string): Promise<string | null> => {
     try {
       filePath = toLocalFilePath(filePath);
-      const stats = await fs.promises.stat(filePath);
-      if (stats.size > 200 * 1024 * 1024) {
-        // Stream for large files
-        return new Promise((resolve) => {
-          const hash = crypto.createHash('sha256');
-          const stream = fs.createReadStream(filePath);
-          stream.on('data', chunk => hash.update(chunk));
-          stream.on('end', () => resolve(hash.digest('hex')));
-          stream.on('error', () => resolve(null));
-        });
-      }
-      const buffer = await fs.promises.readFile(filePath);
-      return crypto.createHash('sha256').update(buffer).digest('hex');
+      if (!fs.existsSync(filePath)) return null;
+      const hash = await computeFileHash(filePath);
+      return hash || null;
     } catch {
       return null;
     }
@@ -161,6 +195,9 @@ export function registerFileHandlers() {
   // Check if file exists
   ipcMain.handle('file:exists', async (_event, filePath: string): Promise<boolean> => {
     try {
+      if (typeof filePath === 'string' && /^(https?:)/i.test(filePath)) {
+        return true;
+      }
       filePath = toLocalFilePath(filePath);
       return fs.existsSync(filePath);
     } catch {
@@ -301,13 +338,39 @@ export function registerFileHandlers() {
         // Add manifest JSON as a file inside the ZIP
         archive.append(manifestJson, { name: 'manifest.json' });
 
-        // Add each vault file
+        // Add each vault file (decrypting on-the-fly)
         for (const { localPath, archiveName } of files) {
-          archive.file(localPath, { name: `files/${archiveName}` });
+          try {
+            const raw = fs.readFileSync(localPath);
+            const decrypted = decryptBuffer(raw);
+            archive.append(decrypted, { name: `files/${archiveName}` });
+          } catch {
+            // Fallback for unencrypted legacy files
+            archive.file(localPath, { name: `files/${archiveName}` });
+          }
         }
 
         archive.finalize();
       });
     }
   );
+
+  // Save base64 image data to a file in local storage
+  ipcMain.handle('file:saveBase64', async (_event, base64Data: string, fileName: string) => {
+    if (typeof base64Data !== 'string' || typeof fileName !== 'string') {
+      throw new Error('Invalid arguments');
+    }
+    const userDataPath = app.getPath('userData');
+    const filesDir = path.join(userDataPath, 'local-files');
+    if (!fs.existsSync(filesDir)) {
+      fs.mkdirSync(filesDir, { recursive: true });
+    }
+    const cleanBase64 = base64Data.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(cleanBase64, 'base64');
+    const destPath = path.join(filesDir, `${Date.now()}_${fileName}`);
+    const encrypted = encryptBuffer(buffer);
+    fs.writeFileSync(destPath, encrypted);
+    return destPath;
+  });
 }
+

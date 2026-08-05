@@ -90,8 +90,8 @@ export class VaultService {
     return this.folders.deleteFolder(id);
   }
 
-  async getMaterials(folderId: string, profileId: string) {
-    return this.materials.getMaterials(folderId, profileId);
+  async getMaterials(folderId: string, profileId: string, limit?: number, offset?: number) {
+    return this.materials.getMaterials(folderId, profileId, limit, offset);
   }
   async getAllMaterials(profileId: string) {
     return this.materials.getAllMaterials(profileId);
@@ -105,6 +105,10 @@ export class VaultService {
 
   async capture(type: string, data: any) {
     return this.materials.capture(type, data);
+  }
+
+  async updateMaterial(id: string, updates: Partial<Material>) {
+    return this.materials.updateMaterial(id, updates);
   }
 
   /** Returns active material counts by type — one SQL query, no full fetch. */

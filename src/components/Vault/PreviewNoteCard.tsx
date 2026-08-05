@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Edit3, Trash2 } from 'lucide-react';
+import { htmlToMarkdown, markdownToHtml, parseRichText } from '../../lib/editorUtils';
 
 interface PreviewNoteCardProps {
   note: any;
@@ -7,10 +8,12 @@ interface PreviewNoteCardProps {
   editingNoteContent: string;
   setEditingNoteContent: (content: string) => void;
   startEditNote: (id: string, content: string) => void;
-  confirmEditNote: (id: string) => void;
+  confirmEditNote: (id: string, updatedContent: string) => void;
   cancelEditNote: () => void;
   deleteNote: (id: string) => void;
   setIsEditing: (val: boolean) => void;
+  getFileSrc: (path: string | undefined | null) => string;
+  onLinkClick?: (url: string) => void;
 }
 
 export function PreviewNoteCard({
@@ -23,33 +26,53 @@ export function PreviewNoteCard({
   cancelEditNote,
   deleteNote,
   setIsEditing,
+  getFileSrc,
+  onLinkClick,
 }: PreviewNoteCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const isEditing = editingNoteId === note.id;
   const contentLimit = 250;
   const isLong = note.content.length > contentLimit || note.content.split('\n').length > 5;
+  const cardEditorRef = useRef<HTMLDivElement>(null);
 
   const displayContent = isExpanded || !isLong
     ? note.content
     : note.content.slice(0, contentLimit).trim() + '...';
 
-  const { renderedElements, tags } = parseRichText(displayContent);
+  const { renderedElements, tags } = parseRichText(displayContent, {
+    getFileSrc,
+    onLinkClick,
+    openExternal: window.electronAPI ? window.electronAPI.openExternal : undefined,
+  });
+
+  useEffect(() => {
+    if (isEditing && cardEditorRef.current) {
+      cardEditorRef.current.innerHTML = markdownToHtml(note.content);
+    }
+  }, [isEditing, note.content]);
+
+  const handleSave = () => {
+    if (cardEditorRef.current) {
+      const markdown = htmlToMarkdown(cardEditorRef.current.innerHTML);
+      confirmEditNote(note.id, markdown);
+    }
+  };
 
   return (
     <div className="p-4 bg-surface-container-lowest rounded-xl border border-outline-variant/15 group shadow-sm transition-all hover:shadow-md flex flex-col gap-2 relative text-left">
       {isEditing ? (
         <div className="space-y-2">
-          <textarea
-            className="w-full h-28 bg-surface-container-low border border-outline-variant/20 rounded-lg p-2 text-xs resize-none focus:outline-none focus:border-primary font-sans"
-            value={editingNoteContent}
-            onChange={(e) => setEditingNoteContent(e.target.value)}
+          <div
+            ref={cardEditorRef}
+            contentEditable
             onFocus={() => setIsEditing(true)}
             onBlur={() => setIsEditing(false)}
-            autoFocus
+            className="w-full min-h-[80px] bg-surface-container-low border border-outline-variant/20 rounded-lg p-2 text-xs focus:outline-none overflow-y-auto text-on-surface"
+            style={{ outline: 'none' }}
           />
           <div className="flex gap-2">
-            <button onClick={() => confirmEditNote(note.id)} className="flex-1 py-1.5 bg-primary text-on-primary text-xs font-bold rounded-lg hover:opacity-90">Save</button>
-            <button onClick={cancelEditNote} className="flex-1 py-1.5 bg-surface-container-high text-on-surface-variant text-xs font-bold rounded-lg hover:bg-outline-variant/20">Cancel</button>
+            <button onClick={handleSave} className="flex-1 py-1.5 bg-primary text-on-primary text-xs font-bold rounded-lg hover:opacity-90 cursor-pointer">Save</button>
+            <button onClick={cancelEditNote} className="flex-1 py-1.5 bg-surface-container-high text-on-surface-variant text-xs font-bold rounded-lg hover:bg-outline-variant/20 cursor-pointer">Cancel</button>
           </div>
         </div>
       ) : (
@@ -105,155 +128,4 @@ export function PreviewNoteCard({
       )}
     </div>
   );
-}
-
-// --- Custom Rich Text Markdown Parser ---
-export function parseRichText(text: string) {
-  const tagRegex = /#([a-zA-Z0-9_-]+)/g;
-  const tags: string[] = [];
-  let match;
-  while ((match = tagRegex.exec(text)) !== null) {
-    tags.push(match[1]);
-  }
-
-  const lines = text.split('\n');
-  const renderedElements: React.ReactNode[] = [];
-  let currentList: React.ReactNode[] = [];
-  let isBulletList = false;
-  let isNumberedList = false;
-
-  const pushCurrentList = (key: number) => {
-    if (currentList.length > 0) {
-      if (isBulletList) {
-        renderedElements.push(
-          <ul key={`bullet-${key}`} className="list-disc pl-2 space-y-1 my-1.5 text-xs text-on-surface-variant leading-relaxed">
-            {currentList}
-          </ul>
-        );
-      } else if (isNumberedList) {
-        renderedElements.push(
-          <ol key={`numbered-${key}`} className="list-decimal pl-5 space-y-1 my-1.5 text-xs text-on-surface-variant leading-relaxed">
-            {currentList}
-          </ol>
-        );
-      }
-      currentList = [];
-      isBulletList = false;
-      isNumberedList = false;
-    }
-  };
-
-  const inlineParse = (str: string) => {
-    let parts: { type: 'text' | 'bold' | 'italic' | 'link'; content: string; url?: string }[] = [{ type: 'text', content: str }];
-
-    parts = parts.flatMap((p): any => {
-      if (p.type !== 'text') return p;
-      const subparts = p.content.split(/\*\*([\s\S]*?)\*\*/g);
-      return subparts.map((content, idx) => ({
-        type: idx % 2 === 1 ? 'bold' as const : 'text' as const,
-        content
-      }));
-    });
-
-    parts = parts.flatMap((p): any => {
-      if (p.type !== 'text') return p;
-      const subparts = p.content.split(/_([\s\S]*?)_/g);
-      return subparts.map((content, idx) => ({
-        type: idx % 2 === 1 ? 'italic' as const : 'text' as const,
-        content
-      }));
-    });
-
-    parts = parts.flatMap((p): any => {
-      if (p.type !== 'text') return p;
-      const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
-      const result = [];
-      let lastIndex = 0;
-      let m;
-      while ((m = linkRegex.exec(p.content)) !== null) {
-        if (m.index > lastIndex) {
-          result.push({ type: 'text' as const, content: p.content.substring(lastIndex, m.index) });
-        }
-        result.push({ type: 'link' as const, content: m[1], url: m[2] });
-        lastIndex = linkRegex.lastIndex;
-      }
-      if (lastIndex < p.content.length) {
-        result.push({ type: 'text' as const, content: p.content.substring(lastIndex) });
-      }
-      return result.length > 0 ? result : p;
-    });
-
-    return parts.map((p, idx) => {
-      if (p.type === 'bold') return <strong key={idx} className="font-extrabold text-on-surface">{p.content}</strong>;
-      if (p.type === 'italic') return <em key={idx} className="italic text-on-surface-variant">{p.content}</em>;
-      if (p.type === 'link') return (
-        <a key={idx} href={p.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline font-semibold inline-flex items-center gap-0.5 break-all">
-          {p.content}
-        </a>
-      );
-      return p.content;
-    });
-  };
-
-  lines.forEach((line, idx) => {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      pushCurrentList(idx);
-      return;
-    }
-
-    if (trimmed.split(/\s+/).every(word => word.startsWith('#'))) {
-      return;
-    }
-
-    if (trimmed.startsWith('# ')) {
-      pushCurrentList(idx);
-      renderedElements.push(
-        <h4 key={idx} className="text-sm font-extrabold text-on-surface mt-2 mb-1.5 tracking-tight font-headline">
-          {inlineParse(trimmed.slice(2))}
-        </h4>
-      );
-    } else if (trimmed.startsWith('## ')) {
-      pushCurrentList(idx);
-      renderedElements.push(
-        <h5 key={idx} className="text-xs font-bold text-on-surface mt-2 mb-1 tracking-tight font-headline">
-          {inlineParse(trimmed.slice(3))}
-        </h5>
-      );
-    } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-      if (!isBulletList) {
-        pushCurrentList(idx);
-        isBulletList = true;
-      }
-      currentList.push(
-        <li key={idx} className="text-xs text-on-surface-variant leading-relaxed list-none flex items-start gap-1.5 py-0.5">
-          <span className="text-primary shrink-0 mt-2 w-1.5 h-1.5 rounded-full bg-primary" />
-          <span className="flex-1 break-words">{inlineParse(trimmed.slice(2))}</span>
-        </li>
-      );
-    } else if (/^\d+\.\s/.test(trimmed)) {
-      if (!isNumberedList) {
-        pushCurrentList(idx);
-        isNumberedList = true;
-      }
-      const match = trimmed.match(/^(\d+)\.\s(.*)/);
-      currentList.push(
-        <li key={idx} className="text-xs text-on-surface-variant leading-relaxed list-none flex items-start gap-2 py-0.5">
-          <span className="text-primary font-bold text-[10px] shrink-0 mt-0.5 w-4">{match ? match[1] : '1'}.</span>
-          <span className="flex-1 break-words">{inlineParse(match ? match[2] : trimmed)}</span>
-        </li>
-      );
-    } else {
-      pushCurrentList(idx);
-      renderedElements.push(
-        <p key={idx} className="text-xs text-on-surface-variant leading-relaxed mb-2 break-words">
-          {inlineParse(line)}
-        </p>
-      );
-    }
-  });
-
-  pushCurrentList(lines.length);
-
-  return { renderedElements, tags };
 }

@@ -40,6 +40,11 @@ export class SqliteMaterialRepository implements MaterialRepository {
     if ('storageStatus' in updates) { sets.push('storage_status = @storageStatus'); params['storageStatus'] = updates.storageStatus; }
     if ('trashedAt' in updates) { sets.push('trashed_at = @trashedAt'); params['trashedAt'] = updates.trashedAt ? new Date(updates.trashedAt).getTime() : null; }
     if ('trashPath' in updates) { sets.push('trash_path = @trashPath'); params['trashPath'] = updates.trashPath || null; }
+    if ('url' in updates) { sets.push('url = @url'); params['url'] = updates.url; }
+    if ('localPath' in updates) { sets.push('local_path = @localPath'); params['localPath'] = updates.localPath || null; }
+    if ('fileHash' in updates) { sets.push('file_hash = @fileHash'); params['fileHash'] = updates.fileHash || null; }
+    if ('fileSizeBytes' in updates) { sets.push('file_size = @fileSizeBytes'); params['fileSizeBytes'] = updates.fileSizeBytes || null; }
+    if ('boxType' in updates) { sets.push('box_type = @boxType'); params['boxType'] = updates.boxType; }
     
     if (sets.length === 0) return;
 
@@ -60,14 +65,15 @@ export class SqliteMaterialRepository implements MaterialRepository {
     return material;
   }
 
-  async getByFolderId(folderId: string, profileId: string): Promise<Material[]> {
+  async getByFolderId(folderId: string, profileId: string, limit = 150, offset = 0): Promise<Material[]> {
     const rows = this.db.prepare(`
       SELECT m.*, f.topic_id 
       FROM materials m
       LEFT JOIN folders f ON f.id = m.folder_id
       WHERE m.folder_id = ? AND m.profile_id = ? AND m.storage_status = 'active' 
       ORDER BY m.created_at DESC
-    `).all(folderId, profileId) as (MaterialRow & { topic_id: string })[];
+      LIMIT ? OFFSET ?
+    `).all(folderId, profileId, limit, offset) as (MaterialRow & { topic_id: string })[];
 
     return rows.map(r => {
       const m = toMaterial(r);
@@ -76,14 +82,15 @@ export class SqliteMaterialRepository implements MaterialRepository {
     });
   }
   
-  async getAll(profileId: string): Promise<Material[]> {
+  async getAll(profileId: string, limit = 200, offset = 0): Promise<Material[]> {
     const rows = this.db.prepare(`
       SELECT m.*, f.topic_id 
       FROM materials m
       LEFT JOIN folders f ON f.id = m.folder_id
       WHERE m.profile_id = ? AND m.storage_status = 'active' 
       ORDER BY m.created_at DESC
-    `).all(profileId) as (MaterialRow & { topic_id: string })[];
+      LIMIT ? OFFSET ?
+    `).all(profileId, limit, offset) as (MaterialRow & { topic_id: string })[];
 
     return rows.map(r => {
       const m = toMaterial(r);

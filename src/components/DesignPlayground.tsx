@@ -130,6 +130,29 @@ export default function DesignPlayground({ children }: { children: React.ReactNo
     };
   }, []);
 
+  // Listen for global toasts
+  useEffect(() => {
+    const handleShowToast = (e: Event) => {
+      const customEvent = e as CustomEvent<{ message: string }>;
+      if (customEvent.detail?.message) {
+        setToastMsg(customEvent.detail.message);
+      }
+    };
+    window.addEventListener('corvovault:show-toast', handleShowToast);
+    return () => {
+      window.removeEventListener('corvovault:show-toast', handleShowToast);
+    };
+  }, []);
+
+  // Automatically clear toast after a timeout
+  useEffect(() => {
+    if (!toastMsg) return;
+    const timer = setTimeout(() => {
+      setToastMsg(null);
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [toastMsg]);
+
   // Initialize from SQLite (theme and overrides)
   useEffect(() => {
     if (!user?.id) return;
@@ -486,21 +509,7 @@ export default function DesignPlayground({ children }: { children: React.ReactNo
             </button>
           </div>
 
-          {/* Toast notification */}
-          {toastMsg && (
-            <div style={{
-              position: 'absolute', bottom: 90, left: 12, right: 12,
-              background: 'var(--card)',
-              border: '1px solid var(--primary)',
-              borderRadius: 12, padding: '10px 14px',
-              fontSize: 11, fontWeight: 600, color: 'var(--primary)',
-              animation: 'fadeInUp 0.2s ease',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
-              zIndex: 200,
-            }}>
-              {toastMsg}
-            </div>
-          )}
+
         </div>
       )}
 
@@ -522,6 +531,23 @@ export default function DesignPlayground({ children }: { children: React.ReactNo
           />
         );
       })()}
+
+      {/* Global Toast Notification */}
+      {toastMsg && (
+        <div style={{
+          position: 'fixed', bottom: 24, right: 24,
+          background: 'var(--color-surface-container-high, #1F2937)',
+          border: '1px solid var(--color-primary, #3B82F6)',
+          borderRadius: 12, padding: '12px 18px',
+          fontSize: 12, fontWeight: 600, color: 'var(--color-primary, #3B82F6)',
+          animation: 'fadeInUp 0.2s ease',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+          zIndex: 99999,
+          maxWidth: 400,
+        }}>
+          {toastMsg}
+        </div>
+      )}
     </>
   );
 }

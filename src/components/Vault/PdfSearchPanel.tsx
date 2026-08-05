@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, X, Loader2, FileSearch, AlertCircle, CheckCircle, Download, Globe, FileText } from 'lucide-react';
 import { useOverscroll } from '../../hooks/useOverscroll';
 import { Screen } from '../../types';
@@ -11,6 +11,7 @@ interface PdfResult {
   engine: string;
   score: number;
   publishedDate: string | null;
+  pageCount?: number | null;
 }
 
 interface PdfSearchPanelProps {
@@ -21,6 +22,115 @@ interface PdfSearchPanelProps {
   selectedTopicId: string | null;
   selectedFolderId: string | null;
   onClose: () => void;
+}
+
+interface PdfResultCardProps {
+  result: PdfResult;
+  index: number;
+  isSaved: boolean;
+  isSaving: boolean;
+  saveTopicId: string;
+  saveFolderId: string;
+  onNavigate?: (screen: Screen, url?: string) => void;
+  onSaveToVault: (result: PdfResult) => void;
+}
+
+function PdfResultCard({ result, index, isSaved, isSaving, saveTopicId, saveFolderId, onNavigate, onSaveToVault }: PdfResultCardProps) {
+  const [pageCount, setPageCount] = useState<number | null>(null);
+  const [isLoadingPageCount, setIsLoadingPageCount] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if (window.electronAPI?.invoke) {
+      setIsLoadingPageCount(true);
+      window.electronAPI.invoke('pdf:getPageCount', result.url)
+        .then((res: any) => {
+          if (active) {
+            if (res && res.success && typeof res.pageCount === 'number') {
+              setPageCount(res.pageCount);
+            } else {
+              setPageCount(null);
+            }
+          }
+        })
+        .catch(() => {
+          if (active) setPageCount(null);
+        })
+        .finally(() => {
+          if (active) setIsLoadingPageCount(false);
+        });
+    }
+    return () => {
+      active = false;
+    };
+  }, [result.url]);
+
+  const domain = (() => {
+    try {
+      return new URL(result.url).hostname;
+    } catch {
+      return result.url;
+    }
+  })();
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.03 }}
+      className="bg-surface-container-low border border-outline-variant/10 rounded-xl p-3 flex flex-col gap-2 hover:shadow-md transition-all"
+    >
+      <div className="flex items-start gap-2">
+        <div className="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
+          <FileText className="w-4 h-4 text-red-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h4 className="text-xs font-bold text-on-surface line-clamp-2 leading-tight">{result.title}</h4>
+          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+            <span className="text-[9px] text-outline truncate">{domain}</span>
+            {isLoadingPageCount && (
+              <>
+                <span className="w-1 h-1 bg-outline/30 rounded-full shrink-0" />
+                <span className="text-[9px] text-outline opacity-60 animate-pulse shrink-0">Checking pages...</span>
+              </>
+            )}
+            {pageCount !== null && (
+              <>
+                <span className="w-1 h-1 bg-outline/30 rounded-full shrink-0" />
+                <span className="text-[9px] font-black text-primary shrink-0">{pageCount} pages</span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+      {result.content && (
+        <p className="text-[10px] text-on-surface-variant line-clamp-2 leading-relaxed">{result.content}</p>
+      )}
+      <div className="flex gap-2 mt-auto pt-1">
+        <button
+          onClick={() => onNavigate?.('browser', result.url)}
+          className="flex-1 py-1.5 bg-surface-container-high text-on-surface-variant text-[10px] font-bold rounded-lg hover:bg-primary/10 hover:text-primary transition-all flex items-center justify-center gap-1 cursor-pointer"
+        >
+          <Globe className="w-3.5 h-3.5" /> Preview
+        </button>
+        <button
+          onClick={() => onSaveToVault(result)}
+          disabled={isSaved || isSaving || !saveTopicId || !saveFolderId}
+          className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer ${
+            isSaved
+              ? 'bg-green-50 text-green-600'
+              : 'bg-primary/10 text-primary hover:bg-primary hover:text-on-primary disabled:opacity-30'
+          }`}
+        >
+          {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : isSaved ? <CheckCircle className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5" />}
+          {isSaving ? 'Saving...' : isSaved ? 'Saved!' : 'Save to Vault'}
+        </button>
+      </div>
+      {(!saveTopicId || !saveFolderId) && (
+        <p className="text-[9px] text-amber-500 text-center">Select topic & folder above to save</p>
+      )}
+    </motion.div>
+  );
 }
 
 export function PdfSearchPanel({ onNavigate, addMaterial, topics, folders, selectedTopicId, selectedFolderId, onClose }: PdfSearchPanelProps) {
@@ -307,51 +417,18 @@ export function PdfSearchPanel({ onNavigate, addMaterial, topics, folders, selec
                 {results.map((r, i) => {
                   const isSaved = savedUrls.has(r.url);
                   const isSaving = savingUrl === r.url;
-                  const domain = (() => { try { return new URL(r.url).hostname; } catch { return r.url; } })();
                   return (
-                    <motion.div
+                    <PdfResultCard
                       key={r.url + i}
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.03 }}
-                      className="bg-surface-container-low border border-outline-variant/10 rounded-xl p-3 flex flex-col gap-2 hover:shadow-md transition-all"
-                    >
-                      <div className="flex items-start gap-2">
-                        <div className="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
-                          <FileText className="w-4 h-4 text-red-600" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h4 className="text-xs font-bold text-on-surface line-clamp-2 leading-tight">{r.title}</h4>
-                          <p className="text-[9px] text-outline truncate mt-0.5">{domain}</p>
-                        </div>
-                      </div>
-                      {r.content && (
-                        <p className="text-[10px] text-on-surface-variant line-clamp-2 leading-relaxed">{r.content}</p>
-                      )}
-                      <div className="flex gap-2 mt-auto pt-1">
-                        <button
-                          onClick={() => onNavigate?.('browser', r.url)}
-                          className="flex-1 py-1.5 bg-surface-container-high text-on-surface-variant text-[10px] font-bold rounded-lg hover:bg-primary/10 hover:text-primary transition-all flex items-center justify-center gap-1 cursor-pointer"
-                        >
-                          <Globe className="w-3.5 h-3.5" /> Preview
-                        </button>
-                        <button
-                          onClick={() => handleSaveToVault(r)}
-                          disabled={isSaved || isSaving || !saveTopicId || !saveFolderId}
-                          className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer ${
-                            isSaved
-                              ? 'bg-green-50 text-green-600'
-                              : 'bg-primary/10 text-primary hover:bg-primary hover:text-on-primary disabled:opacity-30'
-                          }`}
-                        >
-                          {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : isSaved ? <CheckCircle className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5" />}
-                          {isSaving ? 'Saving...' : isSaved ? 'Saved!' : 'Save to Vault'}
-                        </button>
-                      </div>
-                      {(!saveTopicId || !saveFolderId) && (
-                        <p className="text-[9px] text-amber-500 text-center">Select topic & folder above to save</p>
-                      )}
-                    </motion.div>
+                      result={r}
+                      index={i}
+                      isSaved={isSaved}
+                      isSaving={isSaving}
+                      saveTopicId={saveTopicId}
+                      saveFolderId={saveFolderId}
+                      onNavigate={onNavigate}
+                      onSaveToVault={handleSaveToVault}
+                    />
                   );
                 })}
               </div>

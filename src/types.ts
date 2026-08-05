@@ -124,6 +124,7 @@ export interface AppSettings {
   focusTimeMinutes: number;
   /** How many days before a trashed material is permanently purged on app startup. Defaults to 30. */
   trashRetentionDays?: number;
+  disableLocalAI?: boolean;
 }
 
 export interface Activity {
@@ -171,6 +172,7 @@ export interface PdfAnnotation {
   bbox?: { x: number; y: number; w: number; h: number };
   color: string;              // CSS color e.g. '#fbbf24'
   callout?: string;           // label rendered near the annotation
+  chunk_id?: string;          // exact DB chunk ID for deterministic highlights
 }
 
 export interface BoardAction {
@@ -197,6 +199,7 @@ export interface ProfessorResponse {
   };
   navigate_to_page?: number;
   modelNameUsed?: string;
+  suggested_follow_up?: string; // next leading question for Socratic guidance
 }
 
 export interface ProfessorSession {

@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import crypto from 'crypto';
 import { EmbeddingService } from './embeddingService';
 import { VectorRepository } from '../repositories/interfaces/VectorRepository';
+import { isRAGEnabled } from '../config/featureFlags';
 
 const englishNumberMap: { [key: string]: string } = {
   one: '1', two: '2', three: '3', four: '4', five: '5',
@@ -155,6 +156,10 @@ export class ProfessorService {
     }
   }
 
+  isLocalAIDisabled(materialId?: string): boolean {
+    return !isRAGEnabled();
+  }
+
   storeChunksWithEmbeddings(
     materialId: string,
     chunks: IngestChunk[],
@@ -236,9 +241,16 @@ export class ProfessorService {
     query: string,
     limit: number = 8
   ): Promise<any[]> {
-    const embService = new EmbeddingService();
-    const queryEmbeddings = await embService.embedBatch([query]);
-    const queryEmbedding = queryEmbeddings[0];
+    let queryEmbedding: Float32Array | null = null;
+    if (isRAGEnabled()) {
+      try {
+        const embService = new EmbeddingService();
+        const queryEmbeddings = await embService.embedBatch([query]);
+        queryEmbedding = queryEmbeddings[0] || null;
+      } catch (err) {
+        console.warn('[ProfessorService] Query embedding generation failed in getRelevantChunks:', err);
+      }
+    }
 
     let allChunks: any[];
     if (this.vectorRepo && this.vectorRepo.isAvailable && queryEmbedding) {
@@ -791,13 +803,17 @@ export class ProfessorService {
 
     const bm25Map = this.calculateBM25(candidates, query);
 
-    const embService = new EmbeddingService();
     let queryEmbedding: Float32Array | null = null;
-    try {
-      const queryEmbeddings = await embService.embedBatch([query]);
-      queryEmbedding = queryEmbeddings[0] || null;
-    } catch (err) {
-      console.warn('[ProfessorService] Query embedding generation failed:', err);
+    if (isRAGEnabled()) {
+      try {
+        const embService = new EmbeddingService();
+        const queryEmbeddings = await embService.embedBatch([query]);
+        queryEmbedding = queryEmbeddings[0] || null;
+      } catch (err) {
+        console.warn('[ProfessorService] Query embedding generation failed:', err);
+      }
+    } else {
+      console.log(`[ProfessorService] Local AI/RAG is disabled via feature flags. Skipping query embedding generation.`);
     }
 
     const queryIsLocal = this.isLocalQuery(query);
@@ -998,11 +1014,49 @@ export class ProfessorService {
 
   storeConceptIndex(materialId: string, indexJson: any, status: 'ready' | 'failed'): void {
     const now = Date.now();
-    this.db.prepare(`
-      INSERT OR REPLACE INTO concept_index
-        (material_id, index_json, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(materialId, JSON.stringify(indexJson), status, now, now);
+    const parsedIndex = typeof indexJson === 'string' ? JSON.parse(indexJson) : indexJson;
+
+    this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT OR REPLACE INTO concept_index
+          (material_id, index_json, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(materialId, JSON.stringify(parsedIndex), status, now, now);
+
+      try {
+        this.db.prepare('DELETE FROM concept_relationships WHERE material_id = ?').run(materialId);
+
+        if (parsedIndex && Array.isArray(parsedIndex.topics)) {
+          const insertRel = this.db.prepare(`
+            INSERT OR IGNORE INTO concept_relationships (material_id, parent_concept, child_concept, relationship_type)
+            VALUES (?, ?, ?, ?)
+          `);
+          for (const topic of parsedIndex.topics) {
+            const childName = (topic.name || topic.title || '').trim();
+            if (!childName) continue;
+
+            if (Array.isArray(topic.prerequisites)) {
+              for (const parent of topic.prerequisites) {
+                const parentName = (parent || '').trim();
+                if (parentName) {
+                  insertRel.run(materialId, parentName, childName, 'prerequisite');
+                }
+              }
+            }
+            if (Array.isArray(topic.related)) {
+              for (const rel of topic.related) {
+                const relName = (rel || '').trim();
+                if (relName) {
+                  insertRel.run(materialId, relName, childName, 'related');
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[ProfessorService] Failed to update concept_relationships table:', err);
+      }
+    })();
   }
 
   getConceptIndex(materialId: string): any | null {
@@ -1161,7 +1215,8 @@ export class ProfessorService {
       chunk_id: c.chunk_id,
       page: c.page,
       section: c.section,
-      chapter_id: c.chapter_id
+      chapter_id: c.chapter_id,
+      preview: c.text ? (c.text.length > 150 ? c.text.substring(0, 150) + '...' : c.text) : ''
     }));
   }
 
@@ -1301,6 +1356,28 @@ export class ProfessorService {
     }));
   }
 
+  get_prerequisites(materialId: string, conceptName: string): string[] {
+    try {
+      const rows = this.db.prepare(`
+        WITH RECURSIVE prerequisite_tree(parent, child, level) AS (
+          SELECT parent_concept, child_concept, 1
+          FROM concept_relationships
+          WHERE material_id = ? AND child_concept = ? AND relationship_type = 'prerequisite'
+          UNION ALL
+          SELECT r.parent_concept, r.child_concept, t.level + 1
+          FROM concept_relationships r
+          JOIN prerequisite_tree t ON r.child_concept = t.parent
+          WHERE r.material_id = ? AND r.relationship_type = 'prerequisite'
+        )
+        SELECT DISTINCT parent FROM prerequisite_tree ORDER BY level DESC;
+      `).all(materialId, conceptName, materialId) as Array<{ parent: string }>;
+      return rows.map(r => r.parent);
+    } catch (err) {
+      console.warn('[ProfessorService] Failed to fetch prerequisites:', err);
+      return [];
+    }
+  }
+
   async runRetrievalTool(
     materialId: string,
     toolName: string,
@@ -1329,6 +1406,8 @@ export class ProfessorService {
           return this.list_topics(materialId);
         case 'list_sections':
           return this.list_sections(materialId);
+        case 'get_prerequisites':
+          return this.get_prerequisites(materialId, args.concept_name);
         default:
           throw new Error(`Unknown retrieval tool: ${toolName}`);
       }

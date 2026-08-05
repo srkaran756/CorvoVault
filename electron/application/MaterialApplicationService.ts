@@ -8,8 +8,8 @@ export class MaterialApplicationService {
     private profiles: ProfileApplicationService
   ) {}
 
-  async getMaterials(folderId: string, profileId: string) {
-    return this.materialRepo.getByFolderId(folderId, profileId);
+  async getMaterials(folderId: string, profileId: string, limit?: number, offset?: number) {
+    return this.materialRepo.getByFolderId(folderId, profileId, limit, offset);
   }
 
   async getAllMaterials(profileId: string) {
@@ -31,6 +31,10 @@ export class MaterialApplicationService {
 
   async getMaterial(id: string): Promise<Material | null> {
     return this.materialRepo.getById(id);
+  }
+
+  async updateMaterial(id: string, updates: Partial<Material>): Promise<void> {
+    return this.materialRepo.update(id, updates);
   }
 
   async captureFile(data: any) {

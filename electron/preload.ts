@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteAllLocalFiles: () => ipcRenderer.invoke('file:deleteAllLocal'),
   fileExists: (filePath: string) => ipcRenderer.invoke('file:exists', filePath),
   readFileBase64: (filePath: string) => ipcRenderer.invoke('file:readBase64', filePath),
+  saveBase64: (base64Data: string, fileName: string) => ipcRenderer.invoke('file:saveBase64', base64Data, fileName),
   
   // App paths
   getAppPath: (name: string) => ipcRenderer.invoke('app:getPath', name),
@@ -59,6 +60,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('browser:clearCache'),
   openDevTools: (): Promise<void> =>
     ipcRenderer.invoke('browser:openDevTools'),
+  getBrowsingData: () => ipcRenderer.invoke('browser:getBrowsingData'),
+  addHistoryEntry: (url: string, title: string) => ipcRenderer.invoke('browser:addHistoryEntry', url, title),
+  getHistory: () => ipcRenderer.invoke('browser:getHistory'),
+  deleteHistoryEntry: (id: string) => ipcRenderer.invoke('browser:deleteHistoryEntry', id),
+  clearHistory: () => ipcRenderer.invoke('browser:clearHistory'),
+  downloadUrl: (url: string) => ipcRenderer.invoke('browser:downloadUrl', url),
+
+  // Deep Ignoto — local privacy proxy + ephemeral session management
+  ignotoStartProxy: (): Promise<{ success: boolean; port?: number; error?: string }> =>
+    ipcRenderer.invoke('ignoto:startProxy'),
+  ignotoCreateSession: (tabId: string): Promise<{ success: boolean; partition?: string; port?: number; error?: string }> =>
+    ipcRenderer.invoke('ignoto:createSession', tabId),
+  ignotoDestroySession: (partition: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('ignoto:destroySession', partition),
+  ignotoGetStats: (): Promise<{ success: boolean; stats?: any; port?: number; activeSessions?: number }> =>
+    ipcRenderer.invoke('ignoto:getStats'),
 
   // SearXNG PDF search
   searxngSearch: (query: string, customInstance?: string): Promise<{
@@ -136,6 +153,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   professorClearIngestion: (materialId: string) =>
     ipcRenderer.invoke('professor:clearIngestion', materialId),
 
+  // OCR Cache (Scanned PDF text-layer cache)
+  getOcrCache: (materialId: string, pageNum: number) =>
+    ipcRenderer.invoke('ocr:getCache', materialId, pageNum),
+  saveOcrCache: (materialId: string, pageNum: number, ocrItemsJson: string) =>
+    ipcRenderer.invoke('ocr:saveCache', materialId, pageNum, ocrItemsJson),
+
   // Auto-updater controls
   checkForUpdates: (): Promise<void> =>
     ipcRenderer.invoke('updater:checkForUpdates'),
@@ -152,7 +175,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   on: (channel: string, callback: (...args: any[]) => void) => {
     // Allowlist: only app-originated push events may be subscribed to from the renderer
     const ALLOWED_CHANNELS = [
-      'material:created', 'material:trashed', 'material:restored', 'material:deleted',
+      'material:created', 'material:updated', 'material:trashed', 'material:restored', 'material:deleted',
       'vault:reconciled',
       'topic:created', 'topic:deleted',
       'folder:created', 'folder:deleted',
@@ -162,6 +185,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'updater:update-available', 'updater:up-to-date', 'updater:download-progress',
       'updater:update-downloaded', 'updater:error',
       'professor:ingestionProgress',  // NEW: progress updates from ingestion queue
+      'courses:extractSyllabusProgress', // NEW: progress updates from syllabus extractor
+      'download:request-options',
+      'download:started',
+      'download:completed',
+      'download:dev-log',
     ];
     if (!ALLOWED_CHANNELS.includes(channel)) {
       console.warn(`[preload] Blocked subscription to disallowed channel: ${channel}`);

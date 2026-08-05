@@ -4,6 +4,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
 import { toLocalFilePath } from '../utils/pathUtils';
+import { decryptBuffer } from '../utils/cryptoUtils';
 
 
 let conversionQueue = Promise.resolve();
@@ -79,10 +80,24 @@ async function performDocxConversion(filePath: string) {
     return { success: true, path: cachedPdf };
   }
 
+  let docxToConvert = filePath;
+  let tempDecryptedPath = '';
+
+  try {
+    const raw = fs.readFileSync(filePath);
+    const decrypted = decryptBuffer(raw);
+    const tempDir = app.getPath('temp');
+    tempDecryptedPath = path.join(tempDir, `cv_temp_${crypto.randomUUID()}${path.extname(filePath)}`);
+    fs.writeFileSync(tempDecryptedPath, decrypted);
+    docxToConvert = tempDecryptedPath;
+  } catch {
+    // legacy fallback
+  }
+
   const tempHtmlPath = path.join(previewsDir, `tmp_${cacheKey}.html`);
 
   try {
-    console.log(`[DOCX Preview] Running: pandoc ${filePath}`);
+    console.log(`[DOCX Preview] Running: pandoc ${docxToConvert}`);
 
     const commonOptions = {
       timeout: 30000,
@@ -92,7 +107,7 @@ async function performDocxConversion(filePath: string) {
     await new Promise<void>((resolve, reject) => {
       execFile(
         pandocPath,
-        [filePath, '-t', 'html', '-s', '--embed-resources', '--metadata', 'pagetitle=Document Preview', '-o', tempHtmlPath],
+        [docxToConvert, '-t', 'html', '-s', '--embed-resources', '--metadata', 'pagetitle=Document Preview', '-o', tempHtmlPath],
         commonOptions,
         (err, _stdout, stderr) => {
           if (err) {
@@ -100,7 +115,7 @@ async function performDocxConversion(filePath: string) {
             if (/Unknown option|unrecognized option|--embed-resources/i.test(stderrStr)) {
               execFile(
                 pandocPath,
-                [filePath, '-t', 'html', '-s', '-o', tempHtmlPath],
+                [docxToConvert, '-t', 'html', '-s', '-o', tempHtmlPath],
                 commonOptions,
                 (err2, _stdout2, stderr2) => {
                   if (err2) {
@@ -138,6 +153,14 @@ async function performDocxConversion(filePath: string) {
       errorType: 'CONVERSION_FAILED',
       errorMessage: `Pandoc failed: ${errMsg}`,
     };
+  } finally {
+    if (tempDecryptedPath && fs.existsSync(tempDecryptedPath)) {
+      try {
+        fs.unlinkSync(tempDecryptedPath);
+      } catch (cleanupErr) {
+        console.warn('[DOCX Preview] Failed to clean up temp decrypted file:', cleanupErr);
+      }
+    }
   }
 
   return new Promise(resolve => {

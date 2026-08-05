@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, Library, PlusCircle, Settings, Globe, ChevronUp, UserPlus, Palette, ChevronLeft, ChevronRight } from 'lucide-react';
+import { LayoutDashboard, Library, StickyNote, PlusCircle, Settings, Globe, ChevronUp, UserPlus, Palette, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTabs } from '../../hooks/useTabs';
@@ -29,8 +29,10 @@ export default function Sidebar() {
   const navItems = [
     { id: 'today', label: 'Today', icon: LayoutDashboard },
     { id: 'vault', label: 'Vault', icon: Library },
+    { id: 'notes-workspace', label: 'Notes', icon: StickyNote },
     { id: 'clip', label: 'Clip', icon: PlusCircle },
     { id: 'browser', label: 'Browser', icon: Globe },
+    { id: 'course-explorer', label: 'Course Explorer', icon: GraduationCap },
     { id: 'settings', label: 'Settings', icon: Settings },
     { id: 'customize', label: 'Customize Space', icon: Palette },
   ];
@@ -40,6 +42,7 @@ export default function Sidebar() {
     if (!activeTabId) return false;
     if (itemId === 'customize') return activeTabId === 'customize';
     if (itemId === 'vault') return activeTabId === 'vault' || activeTabId.startsWith('document-') || activeTabId.startsWith('note-');
+    if (itemId === 'course-explorer') return activeTabId === 'course-explorer' || activeTabId.startsWith('course-workspace-');
     return activeTabId === itemId;
   };
 

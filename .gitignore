@@ -30,3 +30,7 @@ test_output2.html
 
 # Large third-party executable binaries
 resources/pandoc/pandoc.exe
+
+# Private internal builder documentation
+BUILDER_DEBRIEF.md
+

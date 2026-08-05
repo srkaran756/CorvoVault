@@ -252,7 +252,8 @@ const PROFESSOR_TOOL_SCHEMA = {
             page: { type: 'integer' },
             targetText: { type: 'string' },
             color: { type: 'string' },
-            callout: { type: 'string' }
+            callout: { type: 'string' },
+            chunk_id: { type: 'string', description: 'Optional exact database chunk ID for deterministic highlights.' }
           }
         }
       },
@@ -278,7 +279,8 @@ const PROFESSOR_TOOL_SCHEMA = {
           now_confused: { type: 'array', items: { type: 'string' } }
         }
       },
-      navigate_to_page: { type: 'integer', description: 'Optional 1-indexed page number to navigate/jump the user to (e.g. if discussing a topic located on that page).' }
+      navigate_to_page: { type: 'integer', description: 'Optional 1-indexed page number to navigate/jump the user to (e.g. if discussing a topic located on that page).' },
+      suggested_follow_up: { type: 'string', description: 'Optional next leading question to guide the student\'s critical thinking.' }
     }
   }
 };
@@ -389,6 +391,17 @@ export const RETRIEVAL_TOOLS = [
     parameters: {
       type: 'object',
       properties: {}
+    }
+  },
+  {
+    name: 'get_prerequisites',
+    description: 'CONCEPTUAL GRAPH TOOL: Fetch all prerequisite topics and concepts for a given concept name, using the dependency graph.',
+    parameters: {
+      type: 'object',
+      properties: {
+        concept_name: { type: 'string', description: 'The concept name to trace prerequisites for.' }
+      },
+      required: ['concept_name']
     }
   }
 ];
@@ -841,14 +854,15 @@ async function tryJsonPromptFallback(
   "thinking": "optional inner monologue / step-by-step reasoning",
   "speech": "teaching message content here",
   "pdf_annotations": [
-    { "type": "highlight", "page": 1, "targetText": "text to highlight", "color": "orange", "callout": "optional label" }
+    { "type": "highlight", "page": 1, "targetText": "text to highlight", "color": "orange", "callout": "optional label", "chunk_id": "optional-exact-uuid" }
   ],
   "board_actions": [
     { "tool": "chalk", "content": "draw this text", "position": { "x": 0.5, "y": 0.5 }, "style": { "color": "white", "size": 24 }, "timing": 500 }
   ],
   "agenda_update": ["optional updated list of topics"],
   "student_model_delta": { "now_understood": [], "now_confused": [] },
-  "navigate_to_page": 23
+  "navigate_to_page": 23,
+  "suggested_follow_up": "optional next leading question"
 }`;
 
   const augmented = [
@@ -871,11 +885,27 @@ function normalizeProfessorResponse(parsed: any): ProfessorResponse {
   return {
     thinking: typeof parsed?.thinking === 'string' ? parsed.thinking : (parsed?.thinking ? JSON.stringify(parsed.thinking) : undefined),
     speech: typeof parsed?.speech === 'string' ? parsed.speech : (parsed?.speech ? JSON.stringify(parsed.speech) : 'No speech response.'),
-    pdf_annotations: Array.isArray(parsed?.pdf_annotations) ? parsed.pdf_annotations : [],
+    pdf_annotations: Array.isArray(parsed?.pdf_annotations) ? parsed.pdf_annotations.map((ann: any) => {
+      let pageNum = typeof ann.page === 'number' ? ann.page : Number(ann.page || 1);
+      pageNum = isNaN(pageNum) ? 1 : Math.max(1, Math.round(pageNum));
+      return {
+        type: ann.type,
+        page: pageNum,
+        targetText: typeof ann.targetText === 'string' ? ann.targetText : '',
+        color: typeof ann.color === 'string' ? ann.color : 'orange',
+        callout: typeof ann.callout === 'string' ? ann.callout : undefined,
+        chunk_id: typeof ann.chunk_id === 'string' ? ann.chunk_id : undefined
+      };
+    }) : [],
     board_actions: Array.isArray(parsed?.board_actions) ? parsed.board_actions : [],
     agenda_update: parsed?.agenda_update ?? undefined,
     student_model_delta: parsed?.student_model_delta ?? undefined,
-    navigate_to_page: typeof parsed?.navigate_to_page === 'number' ? parsed.navigate_to_page : undefined,
+    navigate_to_page: typeof parsed?.navigate_to_page === 'number' && !isNaN(parsed.navigate_to_page)
+      ? Math.max(1, Math.round(parsed.navigate_to_page))
+      : (typeof parsed?.navigate_to_page === 'string' && !isNaN(Number(parsed.navigate_to_page))
+          ? Math.max(1, Math.round(Number(parsed.navigate_to_page)))
+          : undefined),
+    suggested_follow_up: typeof parsed?.suggested_follow_up === 'string' ? parsed.suggested_follow_up : undefined,
   };
 }
 

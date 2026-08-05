@@ -386,6 +386,34 @@ export default function AiTutorPanel({
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiThinking, setAiThinking] = useState('');
   const [aiStreamingSpeech, setAiStreamingSpeech] = useState('');
+  const [displayedStreamingSpeech, setDisplayedStreamingSpeech] = useState('');
+  const targetSpeechRef = useRef('');
+  const [suggestedFollowUp, setSuggestedFollowUp] = useState<string | null>(null);
+
+  // Handle smooth typewriter output for streamed speech
+  useEffect(() => {
+    if (!aiLoading) {
+      setDisplayedStreamingSpeech('');
+      targetSpeechRef.current = '';
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const target = targetSpeechRef.current;
+      if (!target) return;
+
+      setDisplayedStreamingSpeech((prev) => {
+        if (prev.length >= target.length) {
+          return prev;
+        }
+        // Take snappy strides of 3 characters per 15ms to exceed human reading speed but keep animation extremely smooth
+        const step = Math.min(3, target.length - prev.length);
+        return prev + target.substring(prev.length, prev.length + step);
+      });
+    }, 15);
+
+    return () => clearInterval(interval);
+  }, [aiLoading]);
 
   // Pipeline debug state
   const [showDebugDrawer, setShowDebugDrawer] = useState(false);
@@ -417,6 +445,7 @@ export default function AiTutorPanel({
   useEffect(() => {
     setChatMessages([]);
     setLastDebugInfo(null);
+    setSuggestedFollowUp(null);
     setPipelineSteps({
       classification: { status: 'idle' },
       coverage: { status: 'idle' },
@@ -435,7 +464,7 @@ export default function AiTutorPanel({
     if (professorSession.conversationHistory.length > 0 && chatMessages.length === 0) {
       const restored = professorSession.conversationHistory.map((m) => {
         const sources: number[] = [];
-        const pageMatches = m.content.match(/\b[pP]age\s+(\d+)\b/g) || [];
+        const pageMatches: string[] = m.content.match(/\b[pP]age\s+(\d+)\b/g) || [];
         pageMatches.forEach(match => {
           const num = parseInt(match.match(/\d+/)![0], 10);
           if (!sources.includes(num)) sources.push(num);
@@ -660,8 +689,11 @@ export default function AiTutorPanel({
       ];
 
       const agentToolCalls: any[] = [];
+      let accumulatedChunks: any[] = [];
       setAiThinking('');
       setAiStreamingSpeech('');
+      setDisplayedStreamingSpeech('');
+      targetSpeechRef.current = '';
 
       const professorResponse = await generateProfessorResponse(
         aiConfig,
@@ -671,11 +703,22 @@ export default function AiTutorPanel({
         (tool, args, result) => {
           console.log(`[onToolCall] ${tool}`, args);
           agentToolCalls.push({ tool, args, result, timestamp: Date.now() });
+          
+          if (Array.isArray(result)) {
+            const chunks = result.filter(r => r && typeof r === 'object' && 'chunk_id' in r);
+            if (chunks.length > 0) {
+              accumulatedChunks = [...accumulatedChunks, ...chunks];
+            }
+          }
+          
           updateStep('llmCall', 'running', undefined, `Agent Tool Execution: ${tool}`);
         },
         (chunk) => {
           if (chunk.thinking !== undefined) setAiThinking(chunk.thinking);
-          if (chunk.speech !== undefined) setAiStreamingSpeech(chunk.speech);
+          if (chunk.speech !== undefined) {
+            setAiStreamingSpeech(chunk.speech);
+            targetSpeechRef.current = chunk.speech;
+          }
         }
       );
       const llmDuration = Math.round(performance.now() - llmStart);
@@ -684,16 +727,43 @@ export default function AiTutorPanel({
       // Refinement bypass
       updateStep('refinement', 'completed', 0, 'Refinement delegated to LLM tools');
       
+      if (accumulatedChunks.length > 0) {
+        const uniqueChunksMap = new Map<string, any>();
+        accumulatedChunks.forEach(c => {
+          if (c && c.chunk_id) {
+            uniqueChunksMap.set(c.chunk_id, {
+              chunk_id: c.chunk_id,
+              page: c.page,
+              section: c.section || 'General',
+              text: c.text || c.preview || ''
+            });
+          }
+        });
+        relevantChunks = Array.from(uniqueChunksMap.values());
+        
+        const covRes = computeContextCoverage(promptText, relevantChunks);
+        retrieveMetrics = {
+          coverage: covRes.coverage,
+          missingConcepts: covRes.missingWords,
+          scores: [] as any[]
+        };
+      }
+
       let finalAnnotations = professorResponse.pdf_annotations ?? [];
 
       // 8. Visual Action Dispatching
       updateStep('dispatch', 'running', undefined, 'Dispatching visual updates & syncing...');
       const dispatchStart = performance.now();
 
+      let finalSpeech = professorResponse.speech;
+      if (professorResponse.suggested_follow_up) {
+        finalSpeech += `\n\n*Professor's suggestion:* **${professorResponse.suggested_follow_up}**`;
+      }
+
       const nextHistory = [
         ...professorSession.conversationHistory,
         { role: 'user', content: promptText },
-        { role: 'assistant', content: professorResponse.speech },
+        { role: 'assistant', content: finalSpeech },
       ];
 
       setProfessorSession((prev) => ({
@@ -703,6 +773,9 @@ export default function AiTutorPanel({
         teachingAgenda: professorResponse.agenda_update ?? prev.teachingAgenda,
       }));
 
+      // Update follow-up chip state
+      setSuggestedFollowUp(professorResponse.suggested_follow_up || null);
+
       const uniquePages = Array.from(new Set((relevantChunks ?? []).map((c: any) => c.page).filter(Boolean) as number[]))
         .sort((a, b) => a - b);
 
@@ -710,7 +783,7 @@ export default function AiTutorPanel({
         ...prev,
         {
           role: 'assistant',
-          content: professorResponse.speech,
+          content: finalSpeech,
           thinking: professorResponse.thinking,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           sources: uniquePages,
@@ -852,9 +925,9 @@ export default function AiTutorPanel({
     return `CRITICAL OUTPUT RULE:
 You must output a single valid JSON object. Do not write any explanation, reasoning, or commentary before or after the JSON. Do not use markdown fences (\`\`\`json). Your entire response must start with { and end with }.
 
-You are an elite academic professor teaching the document "${title}" (${totalPages} pages total).
+You are an elite academic professor and an adaptive learning partner teaching the document "${title}" (${totalPages} pages total).
 
-DOCUMENT STRUCTURE:
+DOCUMENT STRUCTURE & CONCEPT MAP:
 ${conceptMapText}
 
 STUDENT MODEL:
@@ -874,30 +947,40 @@ GROUNDING RULES — CRITICAL:
 1. Base your answer ONLY on the document sections you explicitly retrieve. Do NOT use your general training knowledge to explain details not present in the document.
 2. If the necessary information cannot be found in the retrieved sections, you must state exactly: "I could not find this in the document."
 3. Every factual claim, explanation, or definition you write in "speech" must be immediately followed by an inline source citation in brackets (e.g. [1], [2], etc.) pointing to the source index/page that supports it.
+4. You only have access to downloaded PDFs, notes, and documents. You do NOT have access to course videos, cannot watch or listen to videos, and you must never claim that you have watched or can access any videos. If the student asks about a video's content or a video you cannot access, you must state that you cannot access video content and can only answer questions based on the downloaded text materials.
 
-DOCUMENT RESEARCH SKILL & DECISION CYCLE:
+DOCUMENT RESEARCH SKILL & AGENTIC DECISION CYCLE:
 - Your goal is to research systematically and gather sufficient evidence before answering.
 - Follow the Agent Decision Cycle:
   1. Evaluate whether your current context contains enough evidence to answer the student's question.
   2. If evidence is insufficient, choose an appropriate tool to search or read.
-  3. First use Navigation Tools (e.g. search_chunks, list_topics, list_sections) to find where information lives. search_chunks returns references, NOT text.
+  3. First use Navigation Tools (e.g. search_chunks, list_topics, list_sections) to find where information lives.
   4. You MUST call a Reading Tool (e.g. get_page, get_topic, get_section, get_chapter) to retrieve the full, authoritative text before generating an answer.
-  5. Maintain a Progressive Evidence Memory of all content retrieved.
+  5. Backtracking: If the student answers a question incorrectly or is confused about a topic, call the "get_prerequisites" tool to locate prerequisite foundational topics. Retrieve those prerequisites and explain them first.
   6. Stop retrieving when additional queries will not materially improve the quality, completeness, or accuracy of your answer.
   7. Deliver your final response only by calling the professor_response tool.
 
-TEACHING & FORMATTING RULES:
-- Focus on the student's question, but build connections to related sections.
-- When referencing specific text or sections of the document, set page, targetText, and color in pdf_annotations. Use any color requested by the student (e.g., 'red', 'green', 'blue', 'pink', 'purple'), or if none is specified, use 'orange'.
-- targetText rules: (a) Copy at least 10 consecutive words (or the entire page text if the page contains fewer than 10 words), verbatim, from the raw "Verbatim Text of Current Page" provided below or text retrieved via tools — exact bytes, no paraphrasing, no spelling corrections. (b) Set page to the exact number shown in the "--- PAGE N ---" header. (c) Never copy across page boundaries.
-- If the student asks about or references a topic on a different page (or if the teaching agenda leads you to a new page), and you want to jump/scroll the viewer to that page, set navigate_to_page to that page number.
-- When explaining abstract concepts, formulas, definitions, or visual steps, draw them on the blackboard by setting board_actions.
+TEACHING & TUTOR ADAPTATION RULES:
+- Choose an appropriate teaching strategy dynamically:
+  * Socratic Guidance: For complex topics (science, engineering, math, philosophy), do NOT give direct answers immediately. Retrieve the concept graph, look at the source text, explain the context, and ask a leading follow-up question ("suggested_follow_up") to guide the student's critical thinking.
+  * Analogies: Explain abstract or dry concepts using rich, intuitive, and everyday comparisons.
+  * Cognitive Load Controller: Pace your explanations. Keep information concise. If the student is struggling, backtrack along the knowledge graph to prerequisite topics, highlight the prerequisite page, and rebuild understanding from the ground up.
+
+FORMATTING & CITATION TARGETS:
+- When referencing specific text or sections of the document, add items to "pdf_annotations".
+- For every highlight, you MUST supply:
+  (a) "chunk_id": The exact UUID of the chunk retrieved from your tools (e.g. "search_chunks" or "get_page" outputs). This is critical for exact database-based coordinate highlights.
+  (b) "targetText": At least 10 consecutive words, copied verbatim from the retrieved chunk text (exact bytes).
+  (c) "page": The exact page number.
+  (d) "color": Any color requested by the student (e.g. 'red', 'green', 'blue', 'pink', 'purple'), default to 'orange'.
+- Use the "suggested_follow_up" field to prompt the student with the next logical question to advance their comprehension.
+- When explaining abstract concepts, formulas, definitions, or visual steps, draw them on the blackboard by setting "board_actions".
 
 BLACKBOARD RULES:
 - If the student asks "what is X?" or "explain X" and X is a defined concept in the document, draw a simple diagram or comparison table on the blackboard.
 - Always use the blackboard for any concept that has a visual form (formulas, comparisons, diagrams).
 
-RESPONSE FORMAT: Respond as a valid JSON object with keys: speech, pdf_annotations, board_actions, and optional keys: navigate_to_page, agenda_update, student_model_delta.`.trim();
+RESPONSE FORMAT: Respond by calling the professor_response tool, which structures the output JSON with keys: speech, pdf_annotations (containing chunk_id, page, targetText, color, callout), board_actions, suggested_follow_up, navigate_to_page, agenda_update, and student_model_delta.`.trim();
   };
 
   const mergeStudentModel = (
@@ -1172,7 +1255,7 @@ RESPONSE FORMAT: Respond as a valid JSON object with keys: speech, pdf_annotatio
           </div>
         ))}
 
-        {aiLoading && (aiStreamingSpeech || aiThinking) && (
+        {aiLoading && (displayedStreamingSpeech || aiThinking) && (
           <div className="flex flex-col max-w-[85%] mr-auto items-start animate-in fade-in duration-200">
             <div className="p-3 rounded-2xl text-xs leading-relaxed bg-surface-container-high text-on-surface-variant rounded-tl-none border border-outline-variant/10 shadow-sm">
               {aiThinking && (
@@ -1184,9 +1267,9 @@ RESPONSE FORMAT: Respond as a valid JSON object with keys: speech, pdf_annotatio
                   <div className="whitespace-pre-wrap leading-normal border-l border-primary/25 pl-2 mt-1">{aiThinking}</div>
                 </div>
               )}
-              {aiStreamingSpeech && (
+              {displayedStreamingSpeech && (
                 <div className="whitespace-pre-wrap select-text break-words space-y-1">
-                  {renderStyledText(aiStreamingSpeech)}
+                  {renderStyledText(displayedStreamingSpeech)}
                 </div>
               )}
             </div>
@@ -1194,7 +1277,7 @@ RESPONSE FORMAT: Respond as a valid JSON object with keys: speech, pdf_annotatio
           </div>
         )}
 
-        {aiLoading && !aiStreamingSpeech && !aiThinking && (
+        {aiLoading && !displayedStreamingSpeech && !aiThinking && (
           <div className="mr-auto items-start max-w-[85%] flex gap-2 p-2">
             <div className="w-6 h-6 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
               <Loader2 className="w-3 h-3 animate-spin text-primary" />
@@ -1226,6 +1309,23 @@ RESPONSE FORMAT: Respond as a valid JSON object with keys: speech, pdf_annotatio
         )}
         <div ref={chatEndRef} />
       </div>
+
+      {suggestedFollowUp && (
+        <div className="px-3 py-2 bg-surface border-t border-outline-variant/5 flex flex-col gap-1 shrink-0 animate-in slide-in-from-bottom-2 duration-150">
+          <span className="text-[8px] font-black uppercase text-outline tracking-wider block ml-0.5">Suggested Exploration</span>
+          <button
+            onClick={() => {
+              handleSendMessage(suggestedFollowUp);
+              setSuggestedFollowUp(null);
+            }}
+            disabled={aiLoading}
+            className="text-left py-1.5 px-2.5 rounded-lg text-[10px] font-bold bg-surface-container-high hover:bg-primary hover:text-on-primary transition-all text-primary border border-outline-variant/10 flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-40"
+          >
+            <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">{suggestedFollowUp}</span>
+          </button>
+        </div>
+      )}
 
       <div className="p-3 bg-surface border-t border-outline-variant/10 shrink-0">
         <div className="flex gap-1.5 items-center relative">

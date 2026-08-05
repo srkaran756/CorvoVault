@@ -6,6 +6,7 @@ interface ElectronAPI {
   deleteAllLocalFiles: () => Promise<boolean>;
   fileExists: (filePath: string) => Promise<boolean>;
   readFileBase64: (filePath: string) => Promise<string | null>;
+  saveBase64: (base64Data: string, fileName: string) => Promise<string>;
   getAppPath: (name: string) => Promise<string>;
   openExternal: (url: string) => Promise<void>;
   getYouTubeInfo: (url: string) => Promise<{ title: string; author_name: string; thumbnail_url: string } | null>;
@@ -40,6 +41,30 @@ interface ElectronAPI {
   // Browser controls
   clearBrowserCache: () => Promise<{ success: boolean; error?: string }>;
   openDevTools: () => Promise<void>;
+  getBrowsingData: () => Promise<{
+    success: boolean;
+    cookies: Array<{
+      name: string;
+      value: string;
+      domain: string;
+      path: string;
+      secure: boolean;
+      httpOnly: boolean;
+      expirationDate?: number;
+    }>;
+    cacheSize: number;
+    error?: string;
+  }>;
+  addHistoryEntry: (url: string, title: string) => Promise<{ success: boolean; error?: string }>;
+  getHistory: () => Promise<Array<{
+    id: string;
+    title: string;
+    url: string;
+    createdAt: number;
+  }>>;
+  deleteHistoryEntry: (id: string) => Promise<{ success: boolean; error?: string }>;
+  clearHistory: () => Promise<{ success: boolean; error?: string }>;
+  downloadUrl: (url: string) => Promise<{ success: boolean; error?: string }>;
 
   // SearXNG PDF search
   searxngSearch: (query: string, customInstance?: string) => Promise<{
@@ -105,6 +130,10 @@ interface ElectronAPI {
   // Re-ingestion
   professorClearIngestion: (materialId: string) => Promise<{ success: boolean }>;
 
+  // OCR Cache (Scanned PDF text-layer cache)
+  getOcrCache: (materialId: string, pageNum: number) => Promise<string | null>;
+  saveOcrCache: (materialId: string, pageNum: number, ocrItemsJson: string) => Promise<{ success: boolean }>;
+
   // Auto-updater
   checkForUpdates: () => Promise<void>;
   downloadUpdate: () => Promise<void>;
@@ -113,6 +142,11 @@ interface ElectronAPI {
   invoke: (channel: string, ...args: any[]) => Promise<any>;
   on: (channel: string, callback: (...args: any[]) => void) => () => void;
   off: (channel: string, callback: (...args: any[]) => void) => void;
+
+  // Ignoto proxy/session methods (optional)
+  ignotoStartProxy?: (port?: number) => Promise<{ success: boolean; error?: string }>;
+  ignotoGetStats?: () => Promise<any>;
+  ignotoCreateSession?: (options?: any) => Promise<any>;
 }
 
 declare global {

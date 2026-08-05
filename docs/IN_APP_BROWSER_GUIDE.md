@@ -56,9 +56,10 @@ The in-app browser implementation in CorvoVault is divided into a React frontend
 
 ### The React Component
 
-The UI for managing tabs, history, and search inputs is located in [Browser.tsx](file:///f:/SIC%20v4/study-in-center/src/components/Browser.tsx).
+The UI for managing tabs, history, and search inputs is located in [Browser.tsx](file:///f:/SIC%20v4/CorvoVault/src/components/Browser.tsx).
 
 - **Tab State**: Managed using a standard React array of `Tab` objects (containing IDs, titles, URLs, and loading flags).
+- **History & Domain Mode Persistence**: Browser navigation is automatically logged to the `browser_history` SQLite table (migration 014), and domain render mode preferences are cached in `domain_render_cache` (migration 015).
 - **Webview References**: To control the Chromium webviews (e.g., navigating back, reloading, zooming), React uses `useRef<Record<string, any>>({})` to store references to the raw DOM elements.
 - **Background Persistence**: In the render loop, all opened tabs are mapped to `<webview>` components. Instead of unmounting a tab when you switch to another one, the app toggles the CSS `hidden` property:
   ```tsx
@@ -71,12 +72,12 @@ The UI for managing tabs, history, and search inputs is located in [Browser.tsx]
 ### Preload & Main IPC Handlers
 
 For browser-wide actions that require Node.js-level capability, the renderer talks to the main process:
-1. In [preload.ts](file:///f:/SIC%20v4/study-in-center/electron/preload.ts), the browser utilities are exposed:
+1. In [preload.ts](file:///f:/SIC%20v4/CorvoVault/electron/preload.ts), the browser utilities are exposed:
    ```ts
    clearBrowserCache: () => ipcRenderer.invoke('browser:clearCache'),
    openDevTools: () => ipcRenderer.invoke('browser:openDevTools'),
    ```
-2. In [main.ts](file:///f:/SIC%20v4/study-in-center/electron/main.ts), these calls are handled:
+2. In [main.ts](file:///f:/SIC%20v4/CorvoVault/electron/main.ts) and [downloadHandler.ts](file:///f:/SIC%20v4/CorvoVault/electron/ipcHandlers/downloadHandler.ts), these calls and download events are handled:
    - **`browser:clearCache`**: Dynamically accesses the session object for the specific partition and clears cookies, localStorage, and cache databases:
      ```ts
      const browserSession = session.fromPartition('persist:browser');
@@ -84,6 +85,7 @@ For browser-wide actions that require Node.js-level capability, the renderer tal
      await browserSession.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb'] });
      ```
    - **`browser:openDevTools`**: Opens the developer console for inspecting webview content (only enabled in development mode `isDev`).
+   - **Download Interceptor**: Managed via `downloadHandler.ts`, which displays [DownloadPromptModal.tsx](file:///f:/SIC%20v4/CorvoVault/src/components/layout/DownloadPromptModal.tsx) for user confirmation and supports developer inspection via [DevDownloadInspector.tsx](file:///f:/SIC%20v4/CorvoVault/src/components/layout/DevDownloadInspector.tsx).
 
 ---
 
@@ -95,7 +97,7 @@ Building an in-app browser reveals several quirks in Electron and Chromium. Here
 By default, Electron background throttles renderers that are out of focus or hidden. When YouTube runs inside a webview, it may pause, freeze, or display a black screen because Electron starves it of CPU cycles. Additionally, modern browsers block audio/video autoplay unless the user interacts with the page.
 
 **Solution**:
-In [Browser.tsx](file:///f:/SIC%20v4/study-in-center/src/components/Browser.tsx), the `<webview>` specifies customized `webpreferences` and a Desktop User Agent (UA) specifically for YouTube:
+In [Browser.tsx](file:///f:/SIC%20v4/CorvoVault/src/components/Browser.tsx), the `<webview>` specifies customized `webpreferences` and a Desktop User Agent (UA) specifically for YouTube:
 ```tsx
 webpreferences={(tab.url?.includes('youtube.com')) ? 'autoplayPolicy=no-user-gesture-required, backgroundThrottling=false' : undefined}
 useragent={(tab.url?.includes('youtube.com')) ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' : undefined}
@@ -144,7 +146,52 @@ webview.addEventListener('will-navigate', onWillNavigate);
 
 ---
 
-## 5. Honest View: Known Problems & Architectural Debt
+## 5. YouTube Ad Blocking & Anti-Adblock Countermeasures Engine
+
+CorvoVault includes a built-in, multi-layered YouTube ad-blocking mechanism. Rather than relying on a single extension or script, it combines network-level blocking, XHR/Fetch API payload sanitization, DOM media fast-forwarding, and anti-adblock enforcement suppression.
+
+```mermaid
+graph TD
+    subgraph "Layer 1: Network Filter (Electron Main)"
+        Ghostery[Ghostery ElectronBlocker] --> |Intercept HTTP/HTTPS| NetFilter[Block Ad Domains & Trackers]
+        Exemptions[ChatGPT / OpenAI Rules] --> |Bypass Filters| Ghostery
+    end
+
+    subgraph "Layer 2: YouTube API Payload Sanitizer (Injected Script)"
+        FetchHook[Fetch API Hook] --> |Intercept /youtubei/v1/player| StripAds[Strip adPlacements & adSlots]
+        XHRHook[XHR Hook] --> |Intercept /youtubei/v1/next| StripPopups[Suppress ytd-enforcement Popups]
+    end
+
+    subgraph "Layer 3: DOM & HTML5 Media Fallback (Client Video Engine)"
+        MutObs[MutationObserver & Interval] --> |Detect .ad-showing / .ytp-ad-badge| AdAction[Mute + 16x Playback Speed + Skip to End]
+        AdAction --> |Click Skip Button| AutoClick[.ytp-ad-skip-button-modern Click]
+    end
+```
+
+### Layer 1: Network-Level Domain Filtering (`electron/main.ts`)
+The application initializes `@ghostery/adblocker-electron` in `electron/main.ts` using `ElectronBlocker.fromPrebuiltAdsAndTracking(fetch)`.
+- The blocker is enabled on both `persist:browser` (in-app browser partition) and `persist:youtube_player` (dedicated YouTube player partition).
+- **LLM Webview Exemptions**: To prevent aggressive ad-blocking rules from breaking AI providers (e.g., ChatGPT or OpenAI embedded windows), `main.ts` contains custom `isChatGPT` checks that bypass `onBeforeRequest`, `onHeadersReceived`, and `onInjectCosmeticFilters` for ChatGPT/OpenAI domains.
+
+### Layer 2: API Payload Sanitization (XHR/Fetch Interception in `YouTubePlayer.tsx`)
+YouTube frequently updates its ad delivery by injecting ads directly into the JSON response payloads of the InnerTube API (`/youtubei/v1/player` and `/youtubei/v1/next`).
+- CorvoVault injects early XHR and Fetch monkey-patches at `dom-ready`.
+- When YouTube requests player data, the injected script intercepts the JSON response and strips out ad objects (`adPlacements`, `playerAds`, `adSlots`, `adBreakHeartbeatParams`, `adParams`) before YouTube's frontend scripts process them.
+- It also strips anti-adblock enforcement dialog models (`ytd-enforcement-message-view-model`) from the response JSON to prevent YouTube's "Ad blockers violate YouTube Terms of Service" modal from displaying.
+
+### Layer 3: HTML5 Video Engine Acceleration & Skip Fallback
+If an ad bypasses Network and API layers (e.g. server-side injected video ads), the client-side video engine triggers a DOM fallback script:
+- A `MutationObserver` continuously scans the YouTube DOM for active ad indicators (`.ytp-ad-simple-ad-badge`, `.ad-showing`, `.ad-interrupting`).
+- When an active ad is detected:
+  1. The HTML5 `<video>` element is instantly muted (`v.muted = true`).
+  2. The playback rate is boosted to `16.0x` speed (`v.playbackRate = 16.0`).
+  3. The playback head skips straight to the end (`v.currentTime = v.duration - 0.1`).
+  4. Skip buttons (`.ytp-ad-skip-button-modern`, `.ytp-skip-ad-button`) are clicked automatically.
+- Once the ad ends, playback volume and normal `1.0x` speed are restored automatically.
+
+---
+
+## 6. Honest View: Known Problems & Architectural Debt
 
 While the browser is functional, it suffers from several architectural issues that developers should be aware of:
 

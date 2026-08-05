@@ -229,41 +229,97 @@ export function YouTubeWebviewFallback({ url, startSeconds }: YouTubeWebviewFall
           if (window._sicWatchInjected) return;
           window._sicWatchInjected = true;
 
+          // ── 1. Intercept InnerTube API response (/youtubei/v1/player & /next) ──
+          const sanitizePlayerData = (data) => {
+            if (!data || typeof data !== 'object') return data;
+            delete data.adPlacements;
+            delete data.playerAds;
+            delete data.adSlots;
+            delete data.adBreakHeartbeatParams;
+            if (data.playerConfig && data.playerConfig.adConfig) {
+              delete data.playerConfig.adConfig;
+            }
+            return data;
+          };
+
+          const origFetch = window.fetch;
+          window.fetch = async function(...args) {
+            const res = await origFetch.apply(this, args);
+            const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
+            if (url.includes('/youtubei/v1/player') || url.includes('/youtubei/v1/next')) {
+              try {
+                const clone = res.clone();
+                let data = await clone.json();
+                data = sanitizePlayerData(data);
+                return new Response(JSON.stringify(data), {
+                  status: res.status,
+                  statusText: res.statusText,
+                  headers: res.headers,
+                });
+              } catch (e) {}
+            }
+            return res;
+          };
+
+          const origOpen = XMLHttpRequest.prototype.open;
+          XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+            if (typeof url === 'string' && (url.includes('/youtubei/v1/player') || url.includes('/youtubei/v1/next'))) {
+              this.addEventListener('readystatechange', function() {
+                if (this.readyState === 4 && this.status === 200) {
+                  try {
+                    let data = JSON.parse(this.responseText);
+                    data = sanitizePlayerData(data);
+                    Object.defineProperty(this, 'responseText', { value: JSON.stringify(data) });
+                    Object.defineProperty(this, 'response', { value: JSON.stringify(data) });
+                  } catch (e) {}
+                }
+              });
+            }
+            return origOpen.call(this, method, url, ...rest);
+          };
+
+          // ── 2. HTML5 Video Media API Fast-Forward & Mute Fallback ──
           const skipAds = () => {
             const skipBtn = document.querySelector(
               '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytp-ad-skip-button-container button'
             );
-            if (skipBtn) { skipBtn.click(); return; }
+            if (skipBtn) { skipBtn.click(); }
 
-            // Unskippable ad: mute + seek to end so it transitions faster
-            const adBadge = document.querySelector('.ytp-ad-simple-ad-badge, .ytp-ad-duration-remaining');
-            if (adBadge) {
-              const v = document.querySelector('video');
-              if (v && !v.ended) {
-                v.muted = true;
-                if (isFinite(v.duration) && v.duration > 0) v.currentTime = v.duration - 0.1;
+            const adBadge = document.querySelector(
+              '.ytp-ad-simple-ad-badge, .ytp-ad-duration-remaining, .ytp-ad-text, .ad-showing, .ad-interrupting'
+            );
+            const v = document.querySelector('video');
+
+            if (adBadge && v && !v.ended) {
+              v.muted = true;
+              v.playbackRate = 16.0;
+              if (isFinite(v.duration) && v.duration > 0) {
+                v.currentTime = v.duration - 0.1;
               }
+            } else if (v && !adBadge && v.playbackRate === 16.0) {
+              v.playbackRate = 1.0;
             }
 
             document.querySelectorAll(
-              'tp-yt-iron-overlay-backdrop, ytd-popup-container, .ytp-ad-overlay-container'
+              'tp-yt-iron-overlay-backdrop, ytd-popup-container, .ytp-ad-overlay-container, ytd-enforcement-message-view-model'
             ).forEach(el => el.style.display = 'none');
           };
 
           const ensurePlay = () => {
             const v = document.querySelector('video');
-            if (v && v.paused && !v.ended) v.play().catch(() => {});
+            const adBadge = document.querySelector('.ytp-ad-simple-ad-badge, .ad-showing');
+            if (v && v.paused && !v.ended && !adBadge) {
+              v.play().catch(() => {});
+            }
           };
 
           skipAds(); ensurePlay();
 
-          // Click theater mode to expand the player height to fill available space.
-          // We retry a few times since YouTube renders the button asynchronously.
+          // Click theater mode to expand player height
           let theaterAttempts = 0;
           const tryTheater = () => {
             if (theaterAttempts++ > 10) return;
             const flexy = document.querySelector('ytd-watch-flexy');
-            // Only click if NOT already in theater mode
             if (flexy && !flexy.hasAttribute('theater')) {
               const btn = document.querySelector('.ytp-size-button');
               if (btn) { btn.click(); return; }
@@ -274,7 +330,7 @@ export function YouTubeWebviewFallback({ url, startSeconds }: YouTubeWebviewFall
 
           const obs = new MutationObserver(() => { skipAds(); ensurePlay(); });
           obs.observe(document.documentElement, { childList: true, subtree: true });
-          setInterval(() => { skipAds(); ensurePlay(); }, 800);
+          setInterval(() => { skipAds(); ensurePlay(); }, 500);
         })();
       `);
     };

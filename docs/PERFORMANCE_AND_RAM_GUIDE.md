@@ -43,10 +43,10 @@ To keep the application light, fast, and responsive, CorvoVault implements sever
 CorvoVault stores metadata, bookmarks, profiles, and annotations in a local SQLite database located in the user's data directory:
 `app.getPath('userData')/corvovault.db`
 
-By default, SQLite works in **Rollback Journal Mode** with **Full Synchronous commits**. This means every time the app writes to the database, SQLite locks the entire database and waits for the hard drive to physically write the data to the disk platter before continuing. This causes noticeable stuttering in desktop UIs.
+By default, SQLite works in **Rollback Journal Mode** with **Full Synchronous commits**. This means every time the app writes to the database, SQLite locks the entire database and waits for the hard drive to physically write the data to the disk             platter before continuing. This causes noticeable stuttering in desktop UIs.
 
 **CorvoVault's Solution**:
-In [connection.ts](file:///f:/SIC%20v4/study-in-center/electron/db/connection.ts), the database is initialized with two performance-tuning PRAGMAs:
+In [connection.ts](file:///f:/SIC%20v4/CorvoVault/electron/db/connection.ts), the database is initialized with two performance-tuning PRAGMAs:
 ```sql
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
@@ -72,7 +72,7 @@ When a user imports a PDF, the app must:
 If this work was done inside the React UI process, the app's interface would freeze completely, dropping to 0 frames-per-second (FPS) during ingestion.
 
 **CorvoVault's Solution**:
-CorvoVault delegates this work to an asynchronous main process queue ([ingestionQueue.ts](file:///f:/SIC%20v4/study-in-center/electron/services/ingestionQueue.ts)):
+CorvoVault delegates this work to an asynchronous main process queue ([ingestionQueue.ts](file:///f:/SIC%20v4/CorvoVault/electron/services/ingestionQueue.ts)):
 
 ```mermaid
 graph LR

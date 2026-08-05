@@ -6,6 +6,18 @@ import { TabProvider } from './contexts/TabContext';
 import AppShell from './components/layout/AppShell';
 import { ipcService } from './services/ipcService';
 import { applyThemeToDom, DEFAULT_THEME } from './lib/theme';
+import { AnimatePresence } from 'motion/react';
+import DownloadPromptModal from './components/layout/DownloadPromptModal';
+import DevDownloadInspector from './components/layout/DevDownloadInspector';
+import { useTabs } from './hooks/useTabs';
+
+
+
+interface PendingDownload {
+  downloadId: string;
+  filename: string;
+  totalBytes: number;
+}
 
 function AppContent() {
   const { user, loading } = useAuth();
@@ -14,6 +26,7 @@ function AppContent() {
   const [pinError, setPinError] = useState(false);
   const [pinConfig, setPinConfig] = useState<{ enabled: boolean } | null>(null);
   const [pinConfigLoading, setPinConfigLoading] = useState(true);
+  const [pendingDownload, setPendingDownload] = useState<PendingDownload | null>(null);
 
   // Load pin config async (from userData/pin_config.json via IPC), replacing the old
   // synchronous localStorage.getItem('sic_launch_pin_config') read.
@@ -47,6 +60,19 @@ function AppContent() {
       window.removeEventListener('corvovault:theme-updated', handleThemeUpdated);
     };
   }, [user?.id]);
+
+  // Listen for background download options prompt requests
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    const unsub = window.electronAPI.on('download:request-options', (data: PendingDownload) => {
+      setPendingDownload(data);
+    });
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
+
+
 
   const handlePinUnlock = async () => {
     if (!pinConfig) return;
@@ -137,8 +163,55 @@ function AppContent() {
     <DesignPlayground>
       <TabProvider>
         <AppShell />
+        <DownloadPromptGate
+          pendingDownload={pendingDownload}
+          setPendingDownload={setPendingDownload}
+          user={user}
+        />
+        <DevDownloadInspector />
       </TabProvider>
     </DesignPlayground>
+  );
+}
+
+function DownloadPromptGate({
+  pendingDownload,
+  setPendingDownload,
+  user
+}: {
+  pendingDownload: PendingDownload | null;
+  setPendingDownload: (d: PendingDownload | null) => void;
+  user: any;
+}) {
+  const { tabs, activeTabId } = useTabs();
+  const activeTab = tabs?.find(t => t.id === activeTabId);
+  const activeCourse = activeTab?.type === 'course-workspace' ? activeTab.data : null;
+
+  return (
+    <AnimatePresence>
+      {pendingDownload && (
+        <DownloadPromptModal
+          filename={pendingDownload.filename}
+          totalBytes={pendingDownload.totalBytes}
+          profileId={user?.id || ''}
+          activeCourse={activeCourse}
+          onResolve={async (choice, destination) => {
+            if (window.electronAPI) {
+              await window.electronAPI.invoke('download:resolve-options', {
+                downloadId: pendingDownload.downloadId,
+                choice,
+                destination
+              });
+              if (choice === 'vault') {
+                // Navigate to Vault view
+                window.dispatchEvent(new CustomEvent('corvovault:switch-tab', { detail: { tab: 'vault' } }));
+              }
+            }
+            setPendingDownload(null);
+          }}
+        />
+      )}
+    </AnimatePresence>
   );
 }
 

@@ -1,16 +1,6 @@
 import Database from 'better-sqlite3';
-import crypto from 'crypto';
 import fs from 'fs';
-
-async function hashFile(filePath: string): Promise<string | null> {
-  return new Promise(resolve => {
-    const hash = crypto.createHash('sha256');
-    const stream = fs.createReadStream(filePath);
-    stream.on('data', chunk => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex')));
-    stream.on('error', () => resolve(null));
-  });
-}
+import { computeFileHash } from '../utils/cryptoUtils';
 
 export class IntegrityApplicationService {
   constructor(private db: Database.Database) {}
@@ -28,7 +18,7 @@ export class IntegrityApplicationService {
     let ok = 0;
     let corrupted = 0;
     let missing = 0;
-
+ 
     for (const row of rows) {
       if (!fs.existsSync(row.local_path)) {
         missing++;
@@ -36,7 +26,7 @@ export class IntegrityApplicationService {
         continue;
       }
 
-      const currentHash = await hashFile(row.local_path);
+      const currentHash = await computeFileHash(row.local_path);
       if (!currentHash) {
         missing++;
         this.db.prepare('UPDATE materials SET storage_status = ? WHERE id = ?').run('missing', row.id);
