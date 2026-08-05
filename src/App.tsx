@@ -108,19 +108,10 @@ function AppContent() {
     return (
       <div className="min-h-screen bg-surface/30 flex flex-col items-center justify-center gap-8 font-body backdrop-blur-sm">
         <div className="w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center relative shadow-inner">
-          <div
-            style={{
-              maskImage: "url('logo_full.png')",
-              WebkitMaskImage: "url('logo_full.png')",
-              maskSize: 'contain',
-              WebkitMaskSize: 'contain',
-              maskRepeat: 'no-repeat',
-              WebkitMaskRepeat: 'no-repeat',
-              maskPosition: 'center',
-              WebkitMaskPosition: 'center',
-              backgroundColor: 'currentColor'
-            }}
-            className="w-14 h-14 text-primary"
+          <img
+            src="logo_full.png"
+            alt="CorvoVault Logo"
+            className="w-14 h-14 object-contain rounded-full drop-shadow-md"
           />
           <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-surface border border-outline-variant/10 flex items-center justify-center shadow-lg text-primary">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
