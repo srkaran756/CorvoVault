@@ -274,19 +274,10 @@ export default function TitleBar() {
       {/* Left: Logo (drag-handle) */}
       <div className="flex items-center gap-2 pr-3 shrink-0 select-none drag-handle">
         <div className="flex items-center gap-2">
-          <div
-            style={{
-              maskImage: "url('icon.png')",
-              WebkitMaskImage: "url('icon.png')",
-              maskSize: 'contain',
-              WebkitMaskSize: 'contain',
-              maskRepeat: 'no-repeat',
-              WebkitMaskRepeat: 'no-repeat',
-              maskPosition: 'center',
-              WebkitMaskPosition: 'center',
-              backgroundColor: 'currentColor'
-            }}
-            className="w-4 h-4 shrink-0 text-primary"
+          <img
+            src="icon.png"
+            alt="CorvoVault Logo"
+            className="w-4 h-4 shrink-0 object-contain rounded-full"
           />
           <span className="text-xs font-black tracking-tight text-on-surface font-headline leading-none hidden md:block">
             CorvoVault

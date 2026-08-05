@@ -2,14 +2,15 @@ import os
 from PIL import Image
 
 def main():
-    # Source paths (replace with your source logo image paths)
-    img_close_crop_path = "logo_source_close.png"
-    img_full_logo_path = "logo_source_full.png"
-    
     # Destination path relative to project structure
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
     public_dir = os.path.join(project_root, "public")
+    resources_dir = os.path.join(project_root, "resources")
+    
+    source_img_path = os.path.join(resources_dir, "logo_source.png")
+    if not os.path.exists(source_img_path):
+        source_img_path = os.path.join(public_dir, "icon.png")
     
     if not os.path.exists(public_dir):
         os.makedirs(public_dir, exist_ok=True)
@@ -28,13 +29,9 @@ def main():
             square.paste(img, (x, y))
             return square.copy()
 
-    # Process close crop (used for system icons and inline UI logos)
-    print("Processing close crop image...")
-    img_close_square = pad_to_square(img_close_crop_path)
-    
-    # Process full logo (used for lock screen / welcome screen)
-    print("Processing full logo image...")
-    img_full_square = pad_to_square(img_full_logo_path)
+    print(f"Processing logo image from {source_img_path}...")
+    img_close_square = pad_to_square(source_img_path)
+    img_full_square = img_close_square
     
     # 1. Save PNG icon (512x512)
     icon_png_path = os.path.join(public_dir, "icon.png")

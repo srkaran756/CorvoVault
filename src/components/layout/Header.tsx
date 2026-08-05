@@ -93,19 +93,10 @@ export default function Header() {
     <header className="w-full h-12 shrink-0 bg-surface/90 border-b border-outline-variant/10 backdrop-blur-xl flex items-center justify-between px-6 z-40 transition-all select-none duration-200">
       {/* Left: Logo & State dots */}
       <div className="flex items-center gap-3 w-48 shrink-0">
-        <div
-          style={{
-            maskImage: "url('icon.png')",
-            WebkitMaskImage: "url('icon.png')",
-            maskSize: 'contain',
-            WebkitMaskSize: 'contain',
-            maskRepeat: 'no-repeat',
-            WebkitMaskRepeat: 'no-repeat',
-            maskPosition: 'center',
-            WebkitMaskPosition: 'center',
-            backgroundColor: 'currentColor'
-          }}
-          className="w-4 h-4 shrink-0 text-primary"
+        <img
+          src="icon.png"
+          alt="CorvoVault Logo"
+          className="w-4 h-4 shrink-0 object-contain rounded-full"
         />
         <span className="text-sm font-black tracking-tight text-on-surface font-headline leading-none">
           CorvoVault
