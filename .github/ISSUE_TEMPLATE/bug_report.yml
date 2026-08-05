@@ -1,0 +1,109 @@
+name: Bug Report
+description: Create a report to help us fix a bug in CorvoVault
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug! Please fill out as much detail as possible to help us reproduce and resolve the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Summarize the issue you encountered...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: CorvoVault Version / Build
+      description: The version or commit hash of CorvoVault you are running (found in settings or release tag).
+      placeholder: e.g. v1.0.0, commit a1b2c3d, or v2 development build
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      description: What operating system are you running CorvoVault on?
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS Version / Distribution
+      description: Detailed OS version information.
+      placeholder: e.g. Windows 11 23H2, macOS Sonoma 14.5, Ubuntu 24.04 LTS
+    validations:
+      required: false
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Installation Method
+      description: How did you install or run CorvoVault?
+      options:
+        - NSIS Windows Installer
+        - Portable Executable
+        - Built from Source / Development Build (`npm run electron:dev`)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Step-by-step instructions to reproduce the issue.
+      placeholder: |
+        1. Open CorvoVault
+        2. Drag and drop a PDF file into workspace...
+        3. Click on search tab...
+        4. See error message...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: Describe the expected outcome...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs & Terminal / DevTools Console Output
+      description: Paste any error messages, terminal logs, or Developer Tools console logs here.
+      placeholder: Copy and paste relevant logs or stack traces...
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or Screen Recordings
+      description: Drag and drop screenshots or video demonstrations showing the issue.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context or notes about the problem here.
+    validations:
+      required: false

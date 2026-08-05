@@ -11,6 +11,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "typecheck:electron": "tsc -p electron/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:rebuild": "npm rebuild better-sqlite3 && vitest run",
     "postinstall": "electron-rebuild -f -o better-sqlite3,keytar,sqlite-vec && node scripts/copy-pdfjs-worker.js",
