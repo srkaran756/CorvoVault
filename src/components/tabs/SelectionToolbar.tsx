@@ -1,5 +1,4 @@
-import React from 'react';
-import { Trash2, Underline, Strikethrough, Copy } from 'lucide-react';
+import { Trash2, Underline, Strikethrough, Copy, StickyNote } from 'lucide-react';
 
 interface SelectionToolbarProps {
   materialId: string;
@@ -14,6 +13,8 @@ interface SelectionToolbarProps {
   addTextHighlight: (color: string) => void;
   addTextMark: (type: 'highlight' | 'underline' | 'strike' | 'circle', color: string) => void;
   copySelectedText: () => void;
+  clearSelection: () => void;
+  onAddNoteFromSelection?: (text: string) => void;
 }
 
 export default function SelectionToolbar({
@@ -24,6 +25,8 @@ export default function SelectionToolbar({
   addTextHighlight,
   addTextMark,
   copySelectedText,
+  clearSelection,
+  onAddNoteFromSelection,
 }: SelectionToolbarProps) {
   return (
     <div
@@ -83,6 +86,19 @@ export default function SelectionToolbar({
       >
         <Copy className="w-3.5 h-3.5" />
       </button>
+
+      {onAddNoteFromSelection && !selectionToolbar.existingHighlightId && (
+        <button
+          onClick={() => {
+            onAddNoteFromSelection(selectionToolbar.text);
+            clearSelection();
+          }}
+          className="p-1 rounded hover:bg-white/10 cursor-pointer text-white/80 hover:text-white transition-colors"
+          title="Add to Notes"
+        >
+          <StickyNote className="w-3.5 h-3.5" />
+        </button>
+      )}
     </div>
   );
 }

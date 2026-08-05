@@ -18,6 +18,20 @@ export function useTopics() {
     });
   }, [user]);
 
+  // Re-fetch topics whenever the main process pushes a topic lifecycle event
+  useEffect(() => {
+    if (!user || !window.electronAPI) return;
+    const refresh = () => {
+      ipcService.topics.getAll(user.id).then(setTopics);
+    };
+    const unsub = [
+      'topic:created',
+      'topic:deleted',
+    ].map(channel => window.electronAPI!.on(channel, refresh));
+
+    return () => { unsub.forEach(off => off && off()); };
+  }, [user]);
+
   const addTopic = useCallback(async (name: string) => {
     if (!user) return;
     const newTopic = await ipcService.topics.create(user.id, name);
@@ -63,6 +77,17 @@ export function useFolders(topicId?: string) {
   }, [user, topicId]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // Re-fetch folders when folder events are triggered
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    const unsub = [
+      'folder:created',
+      'folder:deleted',
+    ].map(channel => window.electronAPI!.on(channel, reload));
+
+    return () => { unsub.forEach(off => off && off()); };
+  }, [reload]);
 
   const addFolder = useCallback(async (name: string, parentTopicId: string) => {
     if (!user) return;
@@ -115,6 +140,19 @@ export function useMaterials(folderId?: string, includeTrashed: boolean = false)
   }, [user, folderId, includeTrashed]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // Re-fetch materials whenever the main process pushes a material lifecycle event
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    const unsub = [
+      'material:created',
+      'material:trashed',
+      'material:restored',
+      'material:deleted',
+    ].map(channel => window.electronAPI!.on(channel, reload));
+
+    return () => { unsub.forEach(off => off && off()); };
+  }, [reload]);
 
   const addMaterial = useCallback(async (material: Omit<Material, 'id' | 'profileId' | 'createdAt'>) => {
     if (!user) return;

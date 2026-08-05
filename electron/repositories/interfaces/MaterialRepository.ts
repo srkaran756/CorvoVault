@@ -5,8 +5,8 @@ export interface MaterialRepository {
 
   update(id: string, updates: Partial<Material>): Promise<void>;
   getById(id: string): Promise<Material | null>;
-  getByFolderId(folderId: string, profileId: string): Promise<Material[]>;
-  getAll(profileId: string): Promise<Material[]>;
+  getByFolderId(folderId: string, profileId: string, limit?: number, offset?: number): Promise<Material[]>;
+  getAll(profileId: string, limit?: number, offset?: number): Promise<Material[]>;
   getTrashed(profileId: string): Promise<Material[]>;
   search(profileId: string, query: string): Promise<Material[]>;
   setStorageStatus(id: string, status: Material['storageStatus'], trashPath?: string): Promise<void>;

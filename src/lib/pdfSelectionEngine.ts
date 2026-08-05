@@ -1016,3 +1016,34 @@ export function getCustomSelectionText(
 
   return result;
 }
+
+/**
+ * Helper to construct a ProcessedTextItem from an OCR bounding box & transcribed text.
+ */
+export function createOcrProcessedTextItem(
+  str: string,
+  left: number,
+  top: number,
+  width: number,
+  fontHeight: number,
+  columnIndex: number = 0
+): ProcessedTextItem {
+  const transform = [fontHeight, 0, 0, fontHeight, left, top];
+  return {
+    item: {
+      str,
+      dir: 'ltr',
+      width,
+      height: fontHeight,
+      transform,
+    },
+    transform,
+    fontHeight,
+    angle: 0,
+    left,
+    top,
+    width,
+    columnIndex,
+  };
+}
+

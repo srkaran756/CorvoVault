@@ -4,9 +4,11 @@ import fs from 'fs';
 import path from 'path';
 import { EmbeddingService } from './embeddingService';
 import { ProfessorService, IngestChunk } from './professorService';
+import { isRAGEnabled } from '../config/featureFlags';
 import { BrowserWindow } from 'electron';
 import { isTOCPage } from './tocDetector';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
+import { decryptBuffer } from '../utils/cryptoUtils';
 
 // ─── CHUNKER CONSTANTS ─────────────────────────────────────────────────────
 const EMBEDDING_TOKEN_LIMIT = 256;
@@ -162,7 +164,14 @@ export class IngestionQueue {
     // Dynamic import to support ES Modules in CommonJS context
     const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
-    const data = new Uint8Array(fs.readFileSync(filePath));
+    const raw = fs.readFileSync(filePath);
+    let decrypted: Buffer;
+    try {
+      decrypted = decryptBuffer(raw);
+    } catch {
+      decrypted = raw; // legacy fallback
+    }
+    const data = new Uint8Array(decrypted);
     const doc = await pdfjsLib.getDocument({ data }).promise;
     const pages: ExtractedPage[] = [];
 
@@ -407,7 +416,7 @@ export class IngestionQueue {
         .join('\n');
 
       if (isTOCPage(rawPageText)) {
-        console.log(`[RAG Indexer] Skipping page ${pageNum} — detected as TOC/front-matter`);
+        console.log(`[PDF Chunker] Skipping page ${pageNum} — detected as TOC/front-matter`);
         continue;
       }
       // ─────────────────────────────────────────────────────────────────────
@@ -576,8 +585,13 @@ export class IngestionQueue {
 
     // Phase 3: Generate embeddings
     this.pushStatusToRenderer(materialId, 'processing', 60);
-    const chunkTexts = chunks.map(c => c.text);
-    const embeddings = await this.embeddingService.embedBatch(chunkTexts);
+    let embeddings: Float32Array[] = [];
+    if (isRAGEnabled()) {
+      const chunkTexts = chunks.map(c => c.text);
+      embeddings = await this.embeddingService.embedBatch(chunkTexts);
+    } else {
+      console.log(`[IngestionQueue] Local AI/RAG is disabled via feature flags. Skipping embedding generation for material ${materialId}.`);
+    }
 
     // Phase 4: Store chunks + embeddings to SQLite
     this.pushStatusToRenderer(materialId, 'processing', 90);
@@ -620,6 +634,7 @@ export class IngestionQueue {
       // The old code built arrays like [9, 10, 11, ..., 23] per section,
       // which produced bloated "pp. 9, 10, 11 ... 23" strings in the system
       // prompt's DOCUMENT STRUCTURE block and wasted token budget.
+      const prevTopic = topics[topics.length - 1];
       topics.push({
         name: current.text,
         title: current.text,
@@ -627,6 +642,7 @@ export class IngestionQueue {
         endPage: endPage,
         pages: [startPage], // single start page — see sanitizePageRef() spec
         description: '',
+        prerequisites: prevTopic ? [prevTopic.name] : [],
         related: []
       });
     }

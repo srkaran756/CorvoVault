@@ -19,93 +19,52 @@ CorvoVault is a local-first desktop application built to support the journey of 
 - Organize PDFs, DOCX files, videos, links, and YouTube videos into a topic → folder → material hierarchy
 - Read PDFs in a custom built-in viewer with text selection, highlighting, freehand drawing, zoom, rotation, and reading filters
 - Preview DOCX/ODT/RTF files inline (converted via bundled Pandoc to PDF)
-- Take and save notes per material with a rich text editor
-- Track YouTube video watch progress
-- Browse the web inside the app in an isolated session
-- Search the web for PDFs and download them directly into the vault
-- Chat with an AI tutor about the document you are reading (requires your own API key) — *Experimental / Explorer Feature*
+- **Standalone Notes Workspace**: Rich Markdown editing with KaTeX LaTeX math equations (`$...$`, `$$...$$`), live Mermaid diagrams, and web image search embedding
+- **Online Course Explorer & Workspaces**: Browse 60+ online courses, extract lessons, and attach study materials
+- **In-App Web Browser & Privacy Mode**: Isolated Chromium webview tabs, history logging, domain render mode caching, download interceptor prompt, and Deep Ignoto DNS-over-HTTPS proxy
+- **YouTube Rescue Player & Multi-Layer Adblocker**: Embedded YouTube watch player with continuous progress persistence, Ghostery network filtering, InnerTube API JSON payload sanitization (`/youtubei/v1/player`), and HTML5 video auto-skip fallbacks
+- Extract text from document images using local OCR capabilities (PP-OCRv6 / PaddleOCR)
+- Chat with an AI tutor about the document you are reading (requires your own API key) — *Experimental / Explorer Feature governed by `electron/config/featureFlags.ts`*
 - View a study dashboard with time-tracked activity, heatmap, and usage stats
 - Multiple local profiles on one installation, each with its own vault, settings, and theme
 
 ## Tech stack
 
-- Electron 35 (main + preload processes)
+- Electron 35 (main process, preload bridge, and isolated webview host)
 - React 19 + Vite 6 (renderer)
 - TypeScript 5.8
-- SQLite via `better-sqlite3` (WAL mode)
+- SQLite via `better-sqlite3` (WAL mode) with `sqlite-vec` vector extension
 - Tailwind CSS 4
 - `@xenova/transformers` — ONNX runtime for local embedding generation (no GPU required)
+- KaTeX (`katex`, `rehype-katex`, `remark-math`) & Mermaid (`mermaid`) for rich markdown rendering
 
 ## Getting started (development)
 
 **Prerequisites**
+- Windows 10 or later (Node.js 18+)
+- `pandoc.exe` present in `resources/pandoc/` (for DOCX preview)
 
-- Windows 10 or later
-- Node.js 18 or later
-- `pandoc.exe` present in `resources/pandoc/` (required for DOCX preview)
-
-**Install dependencies**
-
+**Install and Start**
 ```bash
 npm install
-```
-
-The `postinstall` script rebuilds native modules (`better-sqlite3`, `keytar`) against Electron automatically. If it fails, run:
-
-```bash
-npm run electron:rebuild
-```
-
-**Start the development environment**
-
-```bash
 npm run electron:dev
 ```
 
-This starts both the Vite dev server (at `http://127.0.0.1:3000`) and Electron concurrently.
+## Documentation & Architecture Guides
 
-**Run unit tests**
-
-```bash
-npm test
-```
-
-## Build and package
-
-```bash
-npm run electron:build
-```
-
-Output is written to `release/`. The app packages as an NSIS installer for Windows.
-
-## Repository layout
-
-```
-corvovault/
-├── electron/     # Main process: IPC handlers, services, repositories, DB
-├── src/          # Renderer: React components, hooks, contexts, lib
-├── shared/       # IPC envelope types shared between main and renderer
-├── docs/         # Engineering documentation
-└── resources/    # Bundled binaries (pandoc.exe)
-```
-
-See [`PROJECT_VISION.md`](PROJECT_VISION.md) for the philosophy, goals, and principles of the application. See [`ENGINEERING.md`](ENGINEERING.md) for architecture, subsystem details, and known issues. For customizing colors and the user interface, see [`docs/THEME_DESIGN_GUIDE.md`](docs/THEME_DESIGN_GUIDE.md).
-
-## Database
-
-Migration scripts run automatically on startup. The migration runner (`electron/db/migrate.ts`) embeds SQL inline — the `.sql` files in `electron/db/migrations/` are reference copies, not what the runner executes.
-
-## Notes to Others
-
-- Ignore the dashboard for now, because I'm planning something different for that.
-- **AI Tutor & RAG Chat**: This feature is highly experimental and exploratory. The local-first vector RAG pipeline and remote LLM agentic tool-use loops contain rough edges (such as tool execution compliance, page number hallucinations, context window limits, and fallback JSON parsing). Expect inconsistencies—it is currently just an experiment.
-- If you want to work as a team and improve this (not just fixing some bugs), you can personally email me at kshivamraj756@gmail.com or WhatsApp me at 7970704703.
+- **Open-Source Contributing Guide**: [`CONTRIBUTING.md`](CONTRIBUTING.md) — Setup, layer rules, IPC safety, DB migration rules, and PR process.
+- **Engineering Specification**: [`ENGINEERING.md`](ENGINEERING.md) — Complete system architecture, IPC contracts, data model (16 migrations), and technical priorities.
+- **In-App Browser & YouTube Adblock Guide**: [`docs/IN_APP_BROWSER_GUIDE.md`](docs/IN_APP_BROWSER_GUIDE.md) — Multi-process webview setup and 3-layer YouTube ad-blocking mechanism.
+- **AI System Architecture**: [`docs/AI_SYSTEM.md`](docs/AI_SYSTEM.md) — Local ONNX embedding pipeline, hybrid vector search (BM25 + `sqlite-vec` + RRF), and agent tool loops.
+- **Performance & Memory Tuning**: [`docs/PERFORMANCE_AND_RAM_GUIDE.md`](docs/PERFORMANCE_AND_RAM_GUIDE.md) — Process memory analysis and webview RAM management.
+- **Theme & Design System**: [`docs/THEME_DESIGN_GUIDE.md`](docs/THEME_DESIGN_GUIDE.md) — CSS variable token system and theme overrides.
+- **Project Philosophy**: [`PROJECT_VISION.md`](PROJECT_VISION.md) — Long-term goals and learning principles.
 
 ## Contributing
 
-- Open issues for bugs or feature requests.
-- Follow existing patterns when adding services or IPC handlers.
-- Run migrations after any schema change.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for full instructions on setting up your environment, running tests, submitting pull requests, and following architectural guidelines.
+
+
 
 ## Troubleshooting
 

@@ -53,6 +53,14 @@ function createTestDb(): Database.Database {
       chapter_id    TEXT,
       raw_text      TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS concept_relationships (
+      material_id TEXT NOT NULL,
+      parent_concept TEXT NOT NULL,
+      child_concept TEXT NOT NULL,
+      relationship_type TEXT NOT NULL DEFAULT 'prerequisite',
+      PRIMARY KEY (material_id, parent_concept, child_concept)
+    );
   `);
   return db;
 }
@@ -200,5 +208,18 @@ describe('ProfessorService retrieval tools', () => {
     const res = service.get_chapter('mat1', '2');
     expect(res.length).toBe(2);
     expect(res[0].page).toBe(5);
+  });
+
+  it('runs get_prerequisites correctly and handles recursive CTE queries', () => {
+    // Populate some dependencies
+    service.storeConceptIndex('mat1', {
+      topics: [
+        { name: 'Chapter 1: Intro to Biology', page: 1, endPage: 4, pages: [1, 2, 3, 4], prerequisites: [] },
+        { name: 'Chapter 2: Cells', page: 5, endPage: 8, pages: [5, 6, 7, 8], prerequisites: ['Chapter 1: Intro to Biology'] }
+      ]
+    }, 'ready');
+
+    const prereqs = service.get_prerequisites('mat1', 'Chapter 2: Cells');
+    expect(prereqs).toContain('Chapter 1: Intro to Biology');
   });
 });

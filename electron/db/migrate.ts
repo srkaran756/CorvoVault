@@ -360,6 +360,97 @@ CREATE TABLE IF NOT EXISTS profile_theme (
     CREATE INDEX IF NOT EXISTS idx_chunks_is_toc
       ON document_chunks(material_id, is_toc);
     `
+  },
+  {
+    version: 11,
+    filename: '011_add_concept_relations.sql',
+    sql: `
+    -- Conceptual Graph: Concept relationships (prerequisites/hierarchy)
+    CREATE TABLE IF NOT EXISTS concept_relationships (
+      material_id TEXT NOT NULL,
+      parent_concept TEXT NOT NULL,
+      child_concept TEXT NOT NULL,
+      relationship_type TEXT NOT NULL DEFAULT 'prerequisite',
+      PRIMARY KEY (material_id, parent_concept, child_concept),
+      FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_concept_relations_material
+      ON concept_relationships(material_id);
+    `
+  },
+  {
+    version: 12,
+    filename: '012_add_courses.sql',
+    sql: `
+    CREATE TABLE IF NOT EXISTS courses (
+      id               TEXT PRIMARY KEY,
+      title            TEXT NOT NULL,
+      provider         TEXT NOT NULL,
+      providerCourseId TEXT NOT NULL,
+      officialUrl      TEXT NOT NULL,
+      thumbnail        TEXT,
+      description      TEXT,
+      language         TEXT,
+      duration         TEXT,
+      isFree           INTEGER NOT NULL DEFAULT 1,
+      rating           REAL,
+      instructor       TEXT,
+      university       TEXT,
+      lastOpened       INTEGER,
+      progress         TEXT,
+      createdAt        INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_courses_provider_id ON courses(provider, providerCourseId);
+    `
+  },
+  {
+    version: 13,
+    filename: '013_add_course_content.sql',
+    sql: `
+    -- Add structured content column to courses table.
+    -- Stores real videos, resources, assignments, projects, discussion links
+    -- as a JSON blob so the workspace can render real data, not hardcoded mocks.
+    ALTER TABLE courses ADD COLUMN content TEXT;
+    `
+  },
+  {
+    version: 14,
+    filename: '014_add_browser_history.sql',
+    sql: `
+    CREATE TABLE IF NOT EXISTS browser_history (
+      id          TEXT PRIMARY KEY,
+      profile_id  TEXT NOT NULL,
+      title       TEXT,
+      url         TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_browser_history_profile_date ON browser_history(profile_id, created_at DESC);
+    `
+  },
+  {
+    version: 15,
+    filename: '015_add_domain_render_cache.sql',
+    sql: `
+    CREATE TABLE IF NOT EXISTS domain_render_cache (
+      domain       TEXT PRIMARY KEY,
+      render_type  TEXT NOT NULL,
+      updated_at   INTEGER NOT NULL
+    );
+    `
+  },
+  {
+    version: 16,
+    filename: '016_add_ocr_cache.sql',
+    sql: `
+    CREATE TABLE IF NOT EXISTS ocr_cache (
+      material_id TEXT NOT NULL,
+      page_num    INTEGER NOT NULL,
+      ocr_items   TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      PRIMARY KEY (material_id, page_num)
+    );
+    `
   }
 ];
 
@@ -398,6 +489,8 @@ export function runMigrations(db: Database.Database): void {
         console.log('[DB] document_chunks.chapter_id already exists; recording migration.');
       } else if (migration.version === 10 && hasColumn(db, 'document_chunks', 'is_toc')) {
         console.log('[DB] document_chunks.is_toc already exists; recording migration.');
+      } else if (migration.version === 13 && hasColumn(db, 'courses', 'content')) {
+        console.log('[DB] courses.content already exists; recording migration.');
       } else {
         db.exec(migration.sql);
       }

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, net, session } from 'electron';
+import { app, BrowserWindow, protocol, net, session, webContents, Menu, ipcMain } from 'electron';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import fs from 'fs';
@@ -15,6 +15,7 @@ import { registerThemeHandlers } from './ipcHandlers/themeHandlers';
 import { registerAnalyticsHandlers } from './ipcHandlers/analyticsHandlers';
 import { registerMigrationHandlers } from './ipcHandlers/migrationHandlers';
 import { registerProfessorHandlers } from './ipcHandlers/professorHandlers';
+import { decryptBuffer } from './utils/cryptoUtils';
 
 // New modular handlers
 import { registerDialogHandlers } from './ipcHandlers/dialogHandlers';
@@ -22,6 +23,10 @@ import { registerFileHandlers } from './ipcHandlers/fileHandlers';
 import { registerWebHandlers } from './ipcHandlers/webHandlers';
 import { registerUpdaterHandlers } from './ipcHandlers/updaterHandlers';
 import { registerWindowHandlers } from './ipcHandlers/windowHandlers';
+import { registerCourseHandlers } from './ipcHandlers/courseHandlers';
+import { registerDownloadHandler } from './ipcHandlers/downloadHandler';
+import { registerIgnotoHandlers } from './ipcHandlers/ignotoHandlers';
+import { registerOcrHandlers } from './ipcHandlers/ocrHandlers';
 
 protocol.registerSchemesAsPrivileged([
   { 
@@ -112,11 +117,118 @@ app.whenReady().then(() => {
   // before the first renderer call arrives.
   createWindow();
 
+  // Register context menu downloader inside webviews to allow downloading media/links
+  app.on('web-contents-created', (event, wc) => {
+    if (wc.getType() === 'webview') {
+      wc.on('context-menu', (e, params) => {
+        const { mediaType, srcURL, linkURL } = params;
+        const menuItems: any[] = [];
+
+        if (mediaType === 'image' && srcURL) {
+          menuItems.push({
+            label: 'Download Image',
+            click: () => {
+              wc.downloadURL(srcURL);
+            }
+          });
+        } else if (mediaType === 'video' && srcURL) {
+          menuItems.push({
+            label: 'Download Video',
+            click: () => {
+              wc.downloadURL(srcURL);
+            }
+          });
+        } else if (mediaType === 'audio' && srcURL) {
+          menuItems.push({
+            label: 'Download Audio',
+            click: () => {
+              wc.downloadURL(srcURL);
+            }
+          });
+        }
+
+        if (linkURL && linkURL.trim() !== '') {
+          menuItems.push({
+            label: 'Download Link Target',
+            click: () => {
+              wc.downloadURL(linkURL);
+            }
+          });
+        }
+
+        if (menuItems.length > 0) {
+          const menu = Menu.buildFromTemplate(menuItems);
+          menu.popup({ window: mainWindow || undefined });
+        }
+      });
+    }
+  });
+
   // Enable ad blocker for the persist:browser partition session
   const browserSession = session.fromPartition('persist:browser');
   ElectronBlocker.fromPrebuiltAdsAndTracking(fetch).then((blocker) => {
-    blocker.enableBlockingInSession(browserSession);
-    console.log('[Browser] Ad blocker enabled for browser session.');
+    // Helper to identify if a URL or its containing webview is loading ChatGPT or OpenAI.
+    // This handles both the main document and all third-party subframes/iframes.
+    const isChatGPT = (url: string, wcId?: number) => {
+      if (url && (url.includes('chatgpt.com') || url.includes('openai.com'))) {
+        return true;
+      }
+      if (wcId !== undefined) {
+        try {
+          const wc = webContents.fromId(wcId);
+          const topUrl = wc?.getURL();
+          if (topUrl && (topUrl.includes('chatgpt.com') || topUrl.includes('openai.com'))) {
+            return true;
+          }
+        } catch (e) {
+          // ignore error if webContents was destroyed or invalid
+        }
+      }
+      return false;
+    };
+
+    // Completely bypass cosmetic and scriptlet injection for ChatGPT and OpenAI webviews.
+    const originalInject = blocker.onInjectCosmeticFilters.bind(blocker);
+    blocker.onInjectCosmeticFilters = async (event: any, url: string, msg?: any) => {
+      const topUrl = event.sender?.getURL();
+      if (isChatGPT(url) || (topUrl && (topUrl.includes('chatgpt.com') || topUrl.includes('openai.com')))) {
+        return;
+      }
+      return originalInject(event, url, msg);
+    };
+
+    // Completely bypass network filtering/blocking for ChatGPT and OpenAI webviews.
+    const originalBeforeRequest = blocker.onBeforeRequest.bind(blocker);
+    blocker.onBeforeRequest = (details: any, callback: any) => {
+      if (isChatGPT(details.url, details.webContentsId)) {
+        callback({});
+        return;
+      }
+      return originalBeforeRequest(details, callback);
+    };
+
+    // Completely bypass CSP modifications for ChatGPT and OpenAI webviews.
+    const originalHeadersReceived = blocker.onHeadersReceived.bind(blocker);
+    blocker.onHeadersReceived = (details: any, callback: any) => {
+      if (isChatGPT(details.url, details.webContentsId)) {
+        callback({});
+        return;
+      }
+      return originalHeadersReceived(details, callback);
+    };
+
+    const enableSessionSafely = (targetSession: any) => {
+      try {
+        ipcMain.removeHandler('@ghostery/adblocker/inject-cosmetic-filters');
+        ipcMain.removeHandler('@ghostery/adblocker/is-mutation-observer-enabled');
+      } catch (e) {}
+      blocker.enableBlockingInSession(targetSession);
+    };
+
+    const youtubeSession = session.fromPartition('persist:youtube_player');
+    enableSessionSafely(browserSession);
+    enableSessionSafely(youtubeSession);
+    console.log('[Browser] Ad blocker enabled for browser and youtube_player sessions (with ChatGPT/OpenAI bypass).');
   }).catch((err) => {
     console.error('[Browser] Failed to initialize ad blocker:', err);
   });
@@ -150,7 +262,35 @@ app.whenReady().then(() => {
         return new Response('File not found', { status: 404 });
       }
 
-      return net.fetch(pathToFileURL(filePath).toString());
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+        '.pdf': 'application/pdf',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.txt': 'text/plain',
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.json': 'application/json',
+      };
+      const mime = mimeMap[ext] || 'application/octet-stream';
+
+      const data = fs.readFileSync(filePath);
+      let decrypted: Buffer;
+      try {
+        decrypted = decryptBuffer(data);
+      } catch {
+        decrypted = data; // legacy fallback
+      }
+
+      return new Response(decrypted, {
+        headers: {
+          'Content-Type': mime,
+          'Content-Length': decrypted.length.toString(),
+        }
+      });
     } catch (error) {
       console.error('Failed to handle corvovault-file protocol:', error);
       return new Response('Internal error', { status: 500 });
@@ -160,9 +300,12 @@ app.whenReady().then(() => {
   // Register new modular IPC handlers
   registerDialogHandlers(() => mainWindow);
   registerFileHandlers();
-  registerWebHandlers(() => mainWindow, isDev);
+  registerWebHandlers(db, () => mainWindow, isDev);
   registerUpdaterHandlers(() => mainWindow, isDev);
   registerWindowHandlers(() => mainWindow);
+  registerDownloadHandler(db, serviceHost, () => mainWindow);
+  registerIgnotoHandlers();
+  registerOcrHandlers();
 
   // Register existing service/DB IPC handlers
   registerVaultHandlers(db, serviceHost);
@@ -172,6 +315,7 @@ app.whenReady().then(() => {
   registerAnalyticsHandlers(db, serviceHost);
   registerMigrationHandlers(db, serviceHost);
   registerProfessorHandlers(db, serviceHost.professor, serviceHost.ingestionQueue);
+  registerCourseHandlers(db, serviceHost);
 
   // NOW load the URL / file content after all handlers are fully registered
   if (mainWindow) {
@@ -182,6 +326,21 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   closeDb();
   app.quit();
+});
+
+// Handle Ctrl+C (SIGINT) and SIGTERM gracefully on Windows/terminal exit
+process.on('SIGINT', () => {
+  console.log('[Main] Received SIGINT. Closing database and exiting...');
+  closeDb();
+  app.quit();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('[Main] Received SIGTERM. Closing database and exiting...');
+  closeDb();
+  app.quit();
+  process.exit(0);
 });
 
 app.on('activate', () => {

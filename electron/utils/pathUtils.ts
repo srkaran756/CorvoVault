@@ -31,10 +31,32 @@ export function toLocalFilePath(value: string): string {
 }
 
 export function assertInsideUserData(filePath: string): void {
-  const userDataPath = app.getPath('userData');
   const resolved = path.resolve(toLocalFilePath(filePath));
-  const relative = path.relative(path.resolve(userDataPath), resolved);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new Error(`[Security] Path traversal blocked: ${filePath}`);
+  const lowerResolved = resolved.toLowerCase();
+
+  // 1. Allow files inside current userData directory
+  const userDataPath = path.resolve(app.getPath('userData')).toLowerCase();
+  const relUserData = path.relative(userDataPath, resolved);
+  if (!relUserData.startsWith('..') && !path.isAbsolute(relUserData)) {
+    return;
   }
+
+  // 2. Allow files inside current temp directory
+  const tempPath = path.resolve(app.getPath('temp')).toLowerCase();
+  const relTemp = path.relative(tempPath, resolved);
+  if (!relTemp.startsWith('..') && !path.isAbsolute(relTemp)) {
+    return;
+  }
+
+  // 3. Allow files inside corvovault user data directories case-insensitively
+  if (
+    lowerResolved.includes('appdata\\roaming\\corvovault') ||
+    lowerResolved.includes('appdata\\local\\corvovault') ||
+    lowerResolved.includes('appdata/roaming/corvovault') ||
+    lowerResolved.includes('appdata/local/corvovault')
+  ) {
+    return;
+  }
+
+  throw new Error(`[Security] Path traversal blocked: ${filePath}`);
 }

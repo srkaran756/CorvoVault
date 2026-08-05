@@ -125,6 +125,86 @@ export default function Library({ onNavigate, isActive = true }: LibraryProps) {
     };
   }, [materials, searchQuery]);
 
+  const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
+    pdfs: true,
+    images: true,
+    documents: true,
+    videos: true,
+    audio: true,
+    other: true
+  });
+  const [accordionMode, setAccordionMode] = useState<boolean>(false);
+
+  const categorizedFiles = useMemo(() => {
+    const pdfs: Material[] = [];
+    const images: Material[] = [];
+    const docs: Material[] = [];
+    const videos: Material[] = [];
+    const audio: Material[] = [];
+    const other: Material[] = [];
+
+    files.forEach(m => {
+      const ext = (m.localPath || m.url || '').split('.').pop()?.toLowerCase() || '';
+      if (ext === 'pdf') {
+        pdfs.push(m);
+      } else if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'tiff'].includes(ext)) {
+        images.push(m);
+      } else if (['docx', 'doc', 'odt', 'rtf', 'txt', 'md', 'ipynb', 'csv', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
+        docs.push(m);
+      } else if (['mp4', 'mkv', 'avi', 'mov', 'webm', 'flv', 'wmv'].includes(ext)) {
+        videos.push(m);
+      } else if (['mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a'].includes(ext)) {
+        audio.push(m);
+      } else {
+        other.push(m);
+      }
+    });
+
+    return [
+      { id: 'pdfs', label: '📄 PDFs', items: pdfs },
+      { id: 'images', label: '🖼️ Images', items: images },
+      { id: 'documents', label: '📑 Documents', items: docs },
+      { id: 'videos', label: '🎥 Videos', items: videos },
+      { id: 'audio', label: '🎵 Audio', items: audio },
+      { id: 'other', label: '📦 Other Files', items: other },
+    ].filter(cat => cat.items.length > 0);
+  }, [files]);
+
+  const toggleCategory = (id: string) => {
+    setExpandedCategories(prev => {
+      if (accordionMode) {
+        const next: Record<string, boolean> = {};
+        Object.keys(prev).forEach(k => {
+          next[k] = k === id ? !prev[k] : false;
+        });
+        return next;
+      }
+      return { ...prev, [id]: !prev[id] };
+    });
+  };
+
+  const expandAllCategories = () => {
+    setExpandedCategories({
+      pdfs: true,
+      images: true,
+      documents: true,
+      videos: true,
+      audio: true,
+      other: true
+    });
+  };
+
+  const collapseAllCategories = () => {
+    setExpandedCategories({
+      pdfs: false,
+      images: false,
+      documents: false,
+      videos: false,
+      audio: false,
+      other: false
+    });
+  };
+
   const [ingestionStatuses, setIngestionStatuses] = useState<Map<string, { status: string; progress: number }>>(new Map());
 
   // Listen to IPC progress updates from the background ingestion process
@@ -429,21 +509,81 @@ export default function Library({ onNavigate, isActive = true }: LibraryProps) {
               {/* File Box */}
               {files.length > 0 && (
                 <div ref={filesOverscrollRef} className="flex flex-col gap-3 h-full overflow-y-auto pr-2 no-scrollbar">
-                  <div className="flex items-center gap-2 px-1">
-                    <FileText className="text-amber-600 w-4 h-4" />
-                    <h2 className="font-bold text-sm">Files ({files.length})</h2>
+                  {/* Category controls header */}
+                  <div className="flex items-center justify-between px-1 mb-1 shrink-0 border-b border-outline-variant/10 pb-2 select-none">
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={expandAllCategories} className="text-[10px] text-primary font-bold hover:underline cursor-pointer">Expand All</button>
+                      <span className="text-[10px] text-outline opacity-40">·</span>
+                      <button onClick={collapseAllCategories} className="text-[10px] text-outline hover:text-on-surface font-bold hover:underline cursor-pointer">Collapse All</button>
+                    </div>
+                    <label className="flex items-center gap-1.5 cursor-pointer text-[10px] text-outline font-bold">
+                      <input 
+                        type="checkbox" 
+                        checked={accordionMode} 
+                        onChange={e => {
+                          setAccordionMode(e.target.checked);
+                          if (e.target.checked) {
+                            // Collapse all except first active category
+                            const firstActive = categorizedFiles[0]?.id;
+                            setExpandedCategories(prev => {
+                              const next: Record<string, boolean> = {};
+                              Object.keys(prev).forEach(k => {
+                                next[k] = k === firstActive;
+                              });
+                              return next;
+                            });
+                          }
+                        }}
+                        className="w-3 h-3 rounded text-primary focus:ring-primary border-outline-variant/35 bg-transparent" 
+                      />
+                      Accordion
+                    </label>
                   </div>
-                  {files.map(m => (
-                    <LibraryCard
-                      key={m.id}
-                      material={m}
-                      onDelete={() => deleteMaterial(m.id)}
-                      onOpen={() => openTab('document', m.title, m)}
-                      onOpenInBrowser={() => openInBrowser(m.url)}
-                      ingestionStatus={ingestionStatuses.get(m.id)}
-                      isActive={activeTabId === `document-${m.id}`}
-                    />
-                  ))}
+
+                  {categorizedFiles.map(cat => {
+                    const isOpen = expandedCategories[cat.id] ?? false;
+                    return (
+                      <div key={cat.id} className="flex flex-col">
+                        {/* Sticky Category Header */}
+                        <div 
+                          onClick={() => toggleCategory(cat.id)}
+                          className="sticky top-0 z-10 bg-surface/95 backdrop-blur-sm py-2 px-2 flex items-center justify-between border-b border-outline-variant/5 cursor-pointer hover:bg-surface-container-high/30 rounded-lg transition-colors select-none"
+                        >
+                          <span className="font-headline font-bold text-xs text-on-surface">{cat.label} ({cat.items.length})</span>
+                          {isOpen ? (
+                            <ChevronDown className="w-3.5 h-3.5 text-outline" />
+                          ) : (
+                            <ChevronRight className="w-3.5 h-3.5 text-outline" />
+                          )}
+                        </div>
+
+                        {/* Collapsible item list */}
+                        <AnimatePresence initial={false}>
+                          {isOpen && (
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.15, ease: 'easeInOut' }}
+                              className="overflow-hidden flex flex-col gap-2 pt-2 pb-3"
+                            >
+                              {cat.items.map(m => (
+                                <LibraryCard
+                                  key={m.id}
+                                  material={m}
+                                  onDelete={() => deleteMaterial(m.id)}
+                                  onOpen={() => openTab('document', m.title, m)}
+                                  onOpenInBrowser={() => openInBrowser(m.url)}
+                                  ingestionStatus={ingestionStatuses.get(m.id)}
+                                  isActive={activeTabId === `document-${m.id}`}
+                                />
+                              ))}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 

@@ -28,7 +28,8 @@ export default function Settings() {
     },
     studyTargetMinutes: 240,
     focusTimeMinutes: 25,
-    trashRetentionDays: 30
+    trashRetentionDays: 30,
+    disableLocalAI: false
   });
   const [localProfile, setLocalProfile] = useState({
     name: '',
@@ -47,6 +48,7 @@ export default function Settings() {
   const [testingOpenRouter, setTestingOpenRouter] = useState(false);
   const [testingOpenAI, setTestingOpenAI] = useState(false);
   const [testingAnthropic, setTestingAnthropic] = useState(false);
+  const [courseProviders, setCourseProviders] = useState<string[]>([]);
 
   // Auto-updater state
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'up-to-date' | 'downloading' | 'ready' | 'error'>('idle');
@@ -60,6 +62,14 @@ export default function Settings() {
     const off4 = window.electronAPI.on('updater:update-downloaded',   (info: any) => { setUpdateStatus('ready'); setUpdateInfo({ version: info?.version }); });
     const off5 = window.electronAPI.on('updater:error',               (msg: any)  => { setUpdateStatus('error'); setUpdateInfo({ error: String(msg) }); });
     return () => { off1(); off2(); off3(); off4(); off5(); };
+  }, []);
+
+  useEffect(() => {
+    if (window.electronAPI) {
+      window.electronAPI.invoke('courses:getProviders').then((list: string[]) => {
+        if (list) setCourseProviders(list);
+      });
+    }
   }, []);
 
   const handlePhotoUpload = async () => {
@@ -103,7 +113,8 @@ export default function Settings() {
         },
         studyTargetMinutes: settings.studyTargetMinutes || 240,
         focusTimeMinutes: settings.focusTimeMinutes || 25,
-        trashRetentionDays: settings.trashRetentionDays ?? 30
+        trashRetentionDays: settings.trashRetentionDays ?? 30,
+        disableLocalAI: settings.disableLocalAI ?? false
       });
     }
     if (user) {
@@ -123,6 +134,9 @@ export default function Settings() {
       updateSettings(localSettings);
       if (user) {
         updateProfile({ ...user, ...localProfile });
+      }
+      if (window.electronAPI) {
+        await window.electronAPI.invoke('courses:saveProviders', courseProviders);
       }
       setMessage({ type: 'success', text: 'All settings saved successfully.' });
     } catch (error) {
@@ -292,6 +306,8 @@ export default function Settings() {
   // --- Vault Section Handlers ---
   const [pinEnabled, setPinEnabled] = useState(false);
   const [newPin, setNewPin] = useState('');
+  const [isChangingPin, setIsChangingPin] = useState(false);
+  const [showPinInput, setShowPinInput] = useState(false);
   const [checkingIntegrity, setCheckingIntegrity] = useState(false);
   const [integrityResults, setIntegrityResults] = useState<{ok: number, corrupted: number, missing: number} | null>(null);
 
@@ -399,30 +415,42 @@ export default function Settings() {
     }
   };
 
-  const setupPin = async () => {
-     if (pinEnabled) {
-         if (confirm("Are you sure you want to disable the launch PIN?")) {
-             await ipcService.pin.set(null);
-             setPinEnabled(false);
-             setNewPin('');
-             setMessage({ type: 'success', text: 'PIN disabled.'});
-         }
-         return;
-     }
+  const handleTogglePin = async () => {
+    if (pinEnabled) {
+      if (confirm("Are you sure you want to disable the launch PIN?")) {
+        try {
+          await ipcService.pin.set(null);
+          setPinEnabled(false);
+          setNewPin('');
+          setIsChangingPin(false);
+          setShowPinInput(false);
+          setMessage({ type: 'success', text: 'PIN disabled.' });
+        } catch (err) {
+          setMessage({ type: 'error', text: 'Failed to disable PIN.' });
+        }
+      }
+    } else {
+      setShowPinInput(!showPinInput);
+      setNewPin('');
+      setIsChangingPin(false);
+    }
+  };
 
+  const handleSavePin = async () => {
     if (!newPin || newPin.length < 4) {
-      setMessage({ type: 'error', text: 'PIN must be at least 4 characters.'});
+      setMessage({ type: 'error', text: 'PIN must be at least 4 characters.' });
       return;
     }
 
     try {
       await ipcService.pin.set(newPin);
-
       setPinEnabled(true);
       setNewPin('');
-      setMessage({ type: 'success', text: 'Launch PIN enabled!'});
+      setShowPinInput(false);
+      setIsChangingPin(false);
+      setMessage({ type: 'success', text: isChangingPin ? 'Launch PIN updated!' : 'Launch PIN enabled!' });
     } catch (err) {
-        setMessage({ type: 'error', text: 'Failed to set PIN.'});
+      setMessage({ type: 'error', text: 'Failed to save PIN.' });
     }
   };
 
@@ -687,6 +715,27 @@ export default function Settings() {
                   onChange={(e) => setLocalSettings({ ...localSettings, anthropicKey: e.target.value })}
                 />
               </div>
+
+              {/* Local AI Toggle */}
+              <div className="p-5 bg-surface-container-low border border-outline/15 rounded-xl flex items-center justify-between mt-6">
+                <div className="space-y-1 pr-4">
+                  <h4 className="font-bold text-sm text-on-surface">Disable Local AI Features (RAG / Semantic Search)</h4>
+                  <p className="text-xs text-outline">Temporarily suspends CPU-bound local document embedding generation during import and falls back to standard keyword search. Saves CPU and skips downloading large AI model files. Recommended for low-spec devices.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLocalSettings({ ...localSettings, disableLocalAI: !localSettings.disableLocalAI })}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    localSettings.disableLocalAI ? 'bg-primary' : 'bg-outline/30'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-surface shadow ring-0 transition duration-200 ease-in-out ${
+                      localSettings.disableLocalAI ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
           </section>
 
@@ -837,37 +886,114 @@ export default function Settings() {
                         )}
                     </div>
                  </div>
-                 <div className="bg-surface-container-low border border-outline-variant/20 rounded-xl p-4">
-                      <div className="flex items-center justify-between mb-3">
-                           <h4 className="font-bold text-sm flex items-center gap-2">
-                               <Key className="w-4 h-4 text-primary" />
-                               App Launch PIN
-                           </h4>
-                           {pinEnabled && <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold uppercase">Enabled</span>}
-                      </div>
-                      <div className="flex gap-2">
-                           <input 
-                               type="password"
-                               placeholder={pinEnabled ? "PIN active" : "Enter new 4+ digit PIN"}
-                               disabled={pinEnabled}
-                               value={newPin}
-                               onChange={e => setNewPin(e.target.value)}
-                               className="flex-1 bg-surface-container-lowest border border-outline/25 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary/30 focus:outline-none disabled:opacity-50 text-on-surface"
-                           />
-                           <button
-                               onClick={setupPin}
-                               className={`px-4 py-2.5 rounded-lg text-xs font-bold text-white transition-all cursor-pointer ${pinEnabled ? 'bg-red-500 hover:bg-red-600' : 'bg-primary hover:bg-primary/90'}`}
-                           >
-                               {pinEnabled ? 'Disable' : 'Set PIN'}
-                           </button>
-                      </div>
-                 </div>
+                  <div className="bg-surface-container-low border border-outline-variant/20 rounded-xl p-5">
+                       <div className="flex items-center justify-between">
+                            <div className="space-y-1">
+                                <h4 className="font-bold text-sm flex items-center gap-2 text-on-surface">
+                                    <Key className="w-4 h-4 text-primary" />
+                                    App Launch PIN
+                                </h4>
+                                <p className="text-[10px] text-outline">Require a secure PIN verification step every time CorvoVault is opened.</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleTogglePin}
+                              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                pinEnabled ? 'bg-primary' : 'bg-outline/30'
+                              }`}
+                            >
+                              <span
+                                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-surface shadow ring-0 transition duration-200 ease-in-out ${
+                                  pinEnabled ? 'translate-x-5' : 'translate-x-0'
+                                }`}
+                              />
+                            </button>
+                       </div>
+
+                       {pinEnabled && !showPinInput && (
+                            <div className="mt-4 pt-4 border-t border-outline-variant/10 flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                     <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                                     <span className="text-xs font-bold text-green-600 dark:text-green-400">Launch lock is active</span>
+                                </div>
+                                <button
+                                     onClick={() => {
+                                         setIsChangingPin(true);
+                                         setShowPinInput(true);
+                                     }}
+                                     className="text-xs font-bold text-primary hover:underline cursor-pointer"
+                                >
+                                     Change PIN
+                                </button>
+                            </div>
+                       )}
+
+                       {showPinInput && (
+                            <div className="mt-4 pt-4 border-t border-outline-variant/10 space-y-3">
+                                 <label className="text-[10px] font-bold uppercase tracking-wider text-outline block">
+                                      {isChangingPin ? "Enter New PIN (4+ digits)" : "Define Launch PIN (4+ digits)"}
+                                 </label>
+                                 <div className="flex gap-2">
+                                      <input 
+                                           type="password"
+                                           placeholder="••••"
+                                           maxLength={12}
+                                           autoFocus
+                                           value={newPin}
+                                           onChange={e => setNewPin(e.target.value.replace(/\D/g, ''))}
+                                           onKeyDown={e => e.key === 'Enter' && handleSavePin()}
+                                           className="flex-1 bg-surface-container-lowest border border-outline/25 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary/30 focus:outline-none text-on-surface"
+                                      />
+                                      <button
+                                           onClick={handleSavePin}
+                                           className="px-4 py-2 bg-primary hover:bg-primary/90 rounded-lg text-xs font-bold text-white transition-all cursor-pointer"
+                                      >
+                                           Save
+                                      </button>
+                                      {isChangingPin && (
+                                           <button
+                                                onClick={() => {
+                                                     setIsChangingPin(false);
+                                                     setShowPinInput(false);
+                                                     setNewPin('');
+                                                }}
+                                                className="px-3 py-2 bg-surface-container-high hover:bg-surface-container-highest rounded-lg text-xs font-bold text-on-surface-variant transition-all cursor-pointer"
+                                           >
+                                                Cancel
+                                           </button>
+                                      )}
+                                 </div>
+                            </div>
+                       )}
+                  </div>
               </div>
             </div>
           </section>
         </div>
 
         <div className="lg:col-span-4 space-y-8">
+          {/* Course Explorer Providers */}
+          <section className="bg-surface-container-high rounded-xl p-6 border border-outline-variant/10">
+            <h3 className="text-[13px] font-bold font-headline uppercase tracking-widest mb-4 flex items-center gap-2 text-on-surface">
+              <Globe className="w-4 h-4 text-primary" />
+              Course Explorer Providers
+            </h3>
+            <div className="space-y-3">
+              <p className="text-[11px] text-outline leading-tight">
+                Configure the list of supported platforms. Separate names with commas.
+              </p>
+              <textarea 
+                className="w-full bg-surface-container-lowest border border-outline/25 rounded-lg p-3 text-xs focus:ring-1 focus:ring-primary/30 focus:outline-none text-on-surface h-24 resize-none" 
+                placeholder="YouTube, MIT OpenCourseWare, Harvard Open Courses..." 
+                value={courseProviders.join(', ')}
+                onChange={(e) => {
+                  const list = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+                  setCourseProviders(list);
+                }}
+              />
+            </div>
+          </section>
+
           {/* Supabase Config */}
           <section className="bg-surface-container-high rounded-xl p-6 border border-outline-variant/10">
             <h3 className="text-[13px] font-bold font-headline uppercase tracking-widest mb-4 flex items-center gap-2 text-on-surface">

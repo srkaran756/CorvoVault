@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Globe, ArrowLeft, ArrowRight, RotateCw, Plus, X, Search, Bookmark, BookmarkCheck, Shield, Loader2, ExternalLink, Trash2, Home, Settings, ZoomIn, ZoomOut, RefreshCw, Moon } from 'lucide-react';
+import { Globe, ArrowLeft, ArrowRight, RotateCw, Plus, X, Search, Bookmark, BookmarkCheck, Shield, Loader2, ExternalLink, Trash2, Home, Settings, ZoomIn, ZoomOut, RefreshCw, Moon, History, Cookie, Ghost, ChevronDown, WifiOff, Activity } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useMaterials, useTopics, useFolders, useBookmarks } from '../hooks/useLocalData';
 import { Screen } from '../types';
@@ -26,6 +26,10 @@ interface Tab {
   canGoForward: boolean;
   lastActiveTime: number;
   isSleeping: boolean;
+  /** Deep Ignoto mode: true means this tab uses an ephemeral isolated session */
+  isIgnoto?: boolean;
+  /** The temp: partition string for the Ignoto session, e.g. "temp:ignoto-<uuid>" */
+  ignotoPartition?: string;
 }
 
 interface BrowserProps {
@@ -48,6 +52,36 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
   const [homePage, setHomePage] = useState(() => localStorage.getItem('browser_homepage') || DEFAULT_HOME);
   const [searchEngine, setSearchEngine] = useState(() => localStorage.getItem('browser_search_engine') || 'Google');
   const [searxngInstance, setSearxngInstance] = useState(() => localStorage.getItem('browser_searxng_instance') || '');
+  const [showBrowsingDataModal, setShowBrowsingDataModal] = useState(false);
+  const [browsingData, setBrowsingData] = useState<{ cookies: any[]; cacheSize: number } | null>(null);
+  const [historyData, setHistoryData] = useState<any[]>([]);
+  const [historySearch, setHistorySearch] = useState('');
+  const [modalTab, setModalTab] = useState<'history' | 'cookies'>('history');
+  // ── Deep Ignoto state ──────────────────────────────────────────────────────
+  /** When true, every new tab automatically opens in Deep Ignoto mode */
+  const [globalIgnoto, setGlobalIgnoto] = useState(false);
+  /** Controls the "New Tab" dropdown to offer Normal vs Ignoto tab choices */
+  const [showNewTabMenu, setShowNewTabMenu] = useState(false);
+  /** Live proxy stats displayed in the status bar while in an Ignoto tab */
+  const [ignotoStats, setIgnotoStats] = useState<{ blockedRequests: number; dohLookups: number; activeSessions: number } | null>(null);
+
+  const fetchBrowsingDataAndHistory = useCallback(async () => {
+    if (window.electronAPI) {
+      const data = await window.electronAPI.getBrowsingData();
+      if (data.success) {
+        setBrowsingData({ cookies: data.cookies, cacheSize: data.cacheSize });
+      }
+      const history = await window.electronAPI.getHistory();
+      setHistoryData(history);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (showBrowsingDataModal) {
+      fetchBrowsingDataAndHistory();
+    }
+  }, [showBrowsingDataModal, fetchBrowsingDataAndHistory]);
+
   const webviewRefs = useRef<Record<string, any>>({});
   // Track last navigated initialUrl to prevent duplicate tab creation on re-renders
   const lastInitialUrlRef = useRef<string | undefined>(initialUrl);
@@ -96,6 +130,28 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
     return () => clearInterval(checkInterval);
   }, []);
 
+  // \u2500\u2500 Deep Ignoto: pre-warm the local proxy on mount so first Ignoto tab opens instantly
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.ignotoStartProxy) {
+      window.electronAPI.ignotoStartProxy().then((res: any) => {
+        if (res?.success) console.log(`[Ignoto] Proxy pre-warmed on port ${res.port}`);
+      }).catch(() => {/* non-fatal */});
+    }
+  }, []);
+
+  // \u2500\u2500 Deep Ignoto: poll proxy stats every 3 s while in an Ignoto tab
+  useEffect(() => {
+    const activeTab = tabs.find(t => t.id === activeTabId);
+    if (!activeTab?.isIgnoto || !isElectron) { setIgnotoStats(null); return; }
+    const poll = async () => {
+      const res = await window.electronAPI?.ignotoGetStats?.();
+      if (res?.success && res.stats) setIgnotoStats({ blockedRequests: res.stats.blockedRequests, dohLookups: res.stats.dohLookups, activeSessions: res.activeSessions ?? 0 });
+    };
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => clearInterval(id);
+  }, [activeTabId, tabs]);
+
   const { addMaterial } = useMaterials();
   const { topics } = useTopics();
   const { folders } = useFolders();
@@ -105,6 +161,7 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
   // Track real time spent in the built-in browser
   // Browser is only active while this tab is active
   useActivityTimer('Web Browser', isActive);
+
 
 
   const activeTab = tabs.find(t => t.id === activeTabId);
@@ -117,8 +174,8 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
 
       // Prevent loading unsupported document types in webview
       if (/\.(docx?|odt|rtf|pptx?|xlsx?|zip|rar|tar|gz|exe|msi)$/i.test(initialUrl)) {
-        if (window.electronAPI) {
-          window.electronAPI.openExternal(initialUrl);
+        if (window.electronAPI && window.electronAPI.downloadUrl) {
+          window.electronAPI.downloadUrl(initialUrl);
         } else {
           window.open(initialUrl, '_blank');
         }
@@ -159,21 +216,39 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
     if (!webview) return;
 
     const onTitleUpdate = (e: any) => {
-      setTabs(prev => prev.map(t => t.id === tabId ? { ...t, title: e.title || t.url } : t));
+      setTabs(prev => {
+        const tab = prev.find(t => t.id === tabId);
+        const updated = prev.map(t => t.id === tabId ? { ...t, title: e.title || t.url } : t);
+        // Ghost Ignoto: never log history for Ignoto tabs
+        if (!tab?.isIgnoto) {
+          let currentUrl = '';
+          try { currentUrl = webview.getURL(); } catch (err) {}
+          if (currentUrl && window.electronAPI && e.title && !e.title.startsWith('http') && e.title !== 'Loading...') {
+            window.electronAPI.addHistoryEntry(currentUrl, e.title);
+          }
+        }
+        return updated;
+      });
     };
 
     const onNavigate = (e: any) => {
-      setTabs(prev => prev.map(t => t.id === tabId ? { 
-        ...t, 
-        url: e.url,
-        canGoBack: webview.canGoBack(),
-        canGoForward: webview.canGoForward(),
-      } : t));
-      // Use ref so this closure always reads the current active tab,
-      // even though setupWebviewListeners is only called once per webview mount.
-      if (tabId === activeTabIdRef.current) {
-        setUrlInput(e.url);
-      }
+      setTabs(prev => {
+        const tab = prev.find(t => t.id === tabId);
+        const updated = prev.map(t => t.id === tabId ? {
+          ...t,
+          url: e.url,
+          canGoBack: webview.canGoBack(),
+          canGoForward: webview.canGoForward(),
+        } : t);
+        if (tabId === activeTabIdRef.current) setUrlInput(e.url);
+        // Ghost Ignoto: never log navigation history for Ignoto tabs
+        if (!tab?.isIgnoto && window.electronAPI) {
+          let currentTitle = '';
+          try { currentTitle = webview.getTitle(); } catch (err) {}
+          window.electronAPI.addHistoryEntry(e.url, currentTitle || e.url);
+        }
+        return updated;
+      });
     };
 
     const onStartLoading = () => {
@@ -196,8 +271,8 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
 
       // Prevent loading unsupported document types in webview
       if (/\.(docx?|odt|rtf|pptx?|xlsx?|zip|rar|tar|gz|exe|msi)$/i.test(popupUrl)) {
-        if (window.electronAPI) {
-          window.electronAPI.openExternal(popupUrl);
+        if (window.electronAPI && window.electronAPI.downloadUrl) {
+          window.electronAPI.downloadUrl(popupUrl);
         } else {
           window.open(popupUrl, '_blank');
         }
@@ -224,8 +299,8 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
       const url = e.url;
       if (/\.(docx?|odt|rtf|pptx?|xlsx?|zip|rar|tar|gz|exe|msi)$/i.test(url)) {
         e.preventDefault();
-        if (window.electronAPI) {
-          window.electronAPI.openExternal(url);
+        if (window.electronAPI && window.electronAPI.downloadUrl) {
+          window.electronAPI.downloadUrl(url);
         } else {
           window.open(url, '_blank');
         }
@@ -255,33 +330,69 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
   // this callback (which would trigger the ref guard and skip re-attaching).
   }, []);
 
+  /** Open a normal new tab — if globalIgnoto is on, opens an Ignoto tab instead */
   const handleAddTab = () => {
+    if (globalIgnoto) { handleAddIgnotoTab(); return; }
     const newTab: Tab = { id: crypto.randomUUID(), title: 'New Tab', url: homePage, initialUrl: homePage, isLoading: false, canGoBack: false, canGoForward: false, lastActiveTime: Date.now(), isSleeping: false };
-    setTabs([...tabs, newTab]);
+    setTabs(prev => [...prev, newTab]);
     setActiveTabId(newTab.id);
     setUrlInput(newTab.url);
+  };
+
+  /** Open a new Deep Ignoto tab with a fresh ephemeral privacy session */
+  const handleAddIgnotoTab = async () => {
+    setShowNewTabMenu(false);
+    const tabId = crypto.randomUUID();
+    let ignotoPartition: string | undefined;
+
+    if (isElectron && window.electronAPI?.ignotoCreateSession) {
+      try {
+        const result = await window.electronAPI.ignotoCreateSession(tabId);
+        if (result?.success) ignotoPartition = result.partition;
+      } catch (err) {
+        console.warn('[Ignoto] Failed to create session:', err);
+      }
+    }
+
+    const ignotoHome = homePage || 'https://www.google.com';
+    const newTab: Tab = {
+      id: tabId,
+      title: 'Deep Ignoto',
+      url: ignotoHome,
+      initialUrl: ignotoHome,
+      isLoading: false,
+      canGoBack: false,
+      canGoForward: false,
+      lastActiveTime: Date.now(),
+      isSleeping: false,
+      isIgnoto: true,
+      ignotoPartition,
+    };
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(newTab.id);
+    setUrlInput(ignotoHome);
   };
 
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     let url = urlInput.trim();
     if (!url) return;
-    
+
     // Smart URL handling
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       if (url.includes('.') && !url.includes(' ')) {
         url = 'https://' + url;
       } else {
-        // Use configured search engine
+        // Use user's configured search engine (e.g. Google, DuckDuckGo)
         const base = SEARCH_ENGINES[searchEngine] || SEARCH_ENGINES.Google;
         url = `${base}${encodeURIComponent(url)}`;
       }
     }
-    
+
     // Prevent loading unsupported document types in webview
     if (/\.(docx?|odt|rtf|pptx?|xlsx?|zip|rar|tar|gz|exe|msi)$/i.test(url)) {
-      if (window.electronAPI) {
-        window.electronAPI.openExternal(url);
+      if (window.electronAPI && window.electronAPI.downloadUrl) {
+        window.electronAPI.downloadUrl(url);
       } else {
         window.open(url, '_blank');
       }
@@ -291,7 +402,6 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
     setTabs(tabs.map(t => t.id === activeTabId ? { ...t, url, title: 'Loading...' } : t));
     setUrlInput(url);
 
-    // Navigate the webview
     const webview = webviewRefs.current[activeTabId];
     if (webview) {
       webview.loadURL(url);
@@ -380,35 +490,45 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
   };
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col bg-surface-container-lowest overflow-hidden">
-      {/* Browser Toolbar */}
-      <div className="bg-surface-container-low border-b border-outline-variant/10 p-2 flex items-center gap-2">
+    <div className="h-[calc(100vh-4rem)] flex flex-col bg-surface-container-lowest overflow-hidden" onClick={() => showNewTabMenu && setShowNewTabMenu(false)}>
+      {/* Browser Toolbar — turns indigo when active tab is Deep Ignoto */}
+      <div className={`border-b p-2 flex items-center gap-2 transition-all duration-500 ${activeTab?.isIgnoto ? 'bg-indigo-950/90 border-indigo-800/40' : 'bg-surface-container-low border-outline-variant/10'}`}>
         <div className="flex items-center gap-0.5">
-          <button onClick={goBack} disabled={!activeTab?.canGoBack} className="p-2 hover:bg-surface-container-high rounded-lg transition-colors disabled:opacity-30" title="Back">
+          <button onClick={goBack} disabled={!activeTab?.canGoBack} className={`p-2 rounded-lg transition-colors disabled:opacity-30 ${activeTab?.isIgnoto ? 'hover:bg-indigo-800/50 text-indigo-200' : 'hover:bg-surface-container-high'}`} title="Back">
             <ArrowLeft className="w-4 h-4" />
           </button>
-          <button onClick={goForward} disabled={!activeTab?.canGoForward} className="p-2 hover:bg-surface-container-high rounded-lg transition-colors disabled:opacity-30" title="Forward">
+          <button onClick={goForward} disabled={!activeTab?.canGoForward} className={`p-2 rounded-lg transition-colors disabled:opacity-30 ${activeTab?.isIgnoto ? 'hover:bg-indigo-800/50 text-indigo-200' : 'hover:bg-surface-container-high'}`} title="Forward">
             <ArrowRight className="w-4 h-4" />
           </button>
-          <button onClick={reload} className="p-2 hover:bg-surface-container-high rounded-lg transition-colors" title="Reload (Ctrl+R)">
-            {activeTab?.isLoading ? <Loader2 className="w-4 h-4 animate-spin text-primary" /> : <RotateCw className="w-4 h-4" />}
+          <button onClick={reload} className={`p-2 rounded-lg transition-colors ${activeTab?.isIgnoto ? 'hover:bg-indigo-800/50 text-indigo-200' : 'hover:bg-surface-container-high'}`} title="Reload (Ctrl+R)">
+            {activeTab?.isLoading ? <Loader2 className={`w-4 h-4 animate-spin ${activeTab?.isIgnoto ? 'text-indigo-400' : 'text-primary'}`} /> : <RotateCw className="w-4 h-4" />}
           </button>
-          <button onClick={goHome} className="p-2 hover:bg-surface-container-high rounded-lg transition-colors" title="Home">
+          <button onClick={goHome} className={`p-2 rounded-lg transition-colors ${activeTab?.isIgnoto ? 'hover:bg-indigo-800/50 text-indigo-200' : 'hover:bg-surface-container-high'}`} title="Home">
             <Home className="w-4 h-4" />
           </button>
         </div>
 
+        {/* URL bar — Ghost badge when Ignoto */}
         <form onSubmit={handleUrlSubmit} className="flex-1 relative group">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-outline">
-            {activeTab?.url.startsWith('https://') ? <Shield className="w-4 h-4 text-green-600" /> : <Globe className="w-4 h-4" />}
+          <div className="absolute left-3 top-1/2 -translate-y-1/2">
+            {activeTab?.isIgnoto
+              ? <Ghost className="w-4 h-4 text-indigo-400 animate-pulse" />
+              : activeTab?.url.startsWith('https://')
+                ? <Shield className="w-4 h-4 text-green-600" />
+                : <Globe className="w-4 h-4 text-outline" />}
           </div>
-          <input 
+          <input
             type="text"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
-            className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-full py-2 pl-10 pr-4 text-sm focus:outline-none focus:border-primary transition-all"
-            placeholder="Search or enter URL..."
+            className={`w-full border rounded-full py-2 pl-10 pr-4 text-sm focus:outline-none transition-all ${activeTab?.isIgnoto ? 'bg-indigo-900/60 border-indigo-700/40 text-indigo-100 placeholder-indigo-400 focus:border-indigo-500' : 'bg-surface-container-lowest border-outline-variant/20 focus:border-primary'}`}
+            placeholder={activeTab?.isIgnoto ? 'Deep Ignoto — search privately...' : 'Search or enter URL...'}
           />
+          {activeTab?.isIgnoto && (
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none">
+              <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-wider">No trace</span>
+            </div>
+          )}
         </form>
 
         <div className="flex gap-1 items-center">
@@ -426,15 +546,15 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
           <div className="w-px h-5 bg-outline-variant/20 mx-1" />
 
           {/* Bookmarks toggle */}
-          <button 
+          <button
             onClick={() => setShowBookmarks(!showBookmarks)}
-            className={`p-2 rounded-lg transition-colors flex items-center ${showBookmarks ? 'bg-primary/20 text-primary' : 'hover:bg-surface-container-high text-outline'}`}
+            className={`p-2 rounded-lg transition-colors flex items-center ${showBookmarks ? 'bg-primary/20 text-primary' : activeTab?.isIgnoto ? 'hover:bg-indigo-800/50 text-indigo-300' : 'hover:bg-surface-container-high text-outline'}`}
             title="Toggle Bookmarks Sidebar"
           >
             <Bookmark className="w-4 h-4" />
           </button>
           {/* Bookmark current page */}
-          <button 
+          <button
             onClick={() => {
               if (activeTab && activeTab.url && activeTab.title) {
                 const isBookmarked = bookmarks.some(b => b.url === activeTab.url);
@@ -446,17 +566,30 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
                 }
               }
             }}
-            className="p-2 hover:bg-surface-container-high text-outline rounded-lg transition-colors"
+            className={`p-2 rounded-lg transition-colors ${activeTab?.isIgnoto ? 'hover:bg-indigo-800/50 text-indigo-300' : 'hover:bg-surface-container-high text-outline'}`}
             title="Bookmark Current Tab"
           >
             {activeTab && bookmarks.some(b => b.url === activeTab.url) ? <BookmarkCheck className="w-4 h-4 text-primary" /> : <Bookmark className="w-4 h-4" />}
           </button>
 
+          <div className="w-px h-5 bg-outline-variant/20 mx-1" />
+
+          {/* Deep Ignoto global toggle */}
+          <div className="relative">
+            <button
+              onClick={() => setGlobalIgnoto(g => !g)}
+              className={`p-2 rounded-lg transition-all flex items-center gap-1 ${globalIgnoto ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : activeTab?.isIgnoto ? 'hover:bg-indigo-800/50 text-indigo-300' : 'hover:bg-surface-container-high text-outline'}`}
+              title={globalIgnoto ? 'Deep Ignoto: ON — all new tabs will be private' : 'Enable Deep Ignoto mode (local privacy proxy)'}
+            >
+              <Ghost className={`w-4 h-4 ${globalIgnoto ? 'animate-pulse' : ''}`} />
+            </button>
+          </div>
+
           {/* Settings */}
           <div className="relative">
             <button
               onClick={() => setShowSettings(s => !s)}
-              className={`p-2 rounded-lg transition-colors ${showSettings ? 'bg-primary/20 text-primary' : 'hover:bg-surface-container-high text-outline'}`}
+              className={`p-2 rounded-lg transition-colors ${showSettings ? 'bg-primary/20 text-primary' : activeTab?.isIgnoto ? 'hover:bg-indigo-800/50 text-indigo-300' : 'hover:bg-surface-container-high text-outline'}`}
               title="Browser Settings"
             >
               <Settings className="w-4 h-4" />
@@ -507,6 +640,13 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
                       />
                     </div>
                     <button
+                      onClick={() => { setShowSettings(false); setShowBrowsingDataModal(true); }}
+                      className="w-full py-2 bg-primary/10 text-primary rounded-xl text-xs font-bold hover:bg-primary/20 transition-all mb-2 flex items-center justify-center gap-1.5"
+                    >
+                      <History className="w-3.5 h-3.5" />
+                      Show Browsing Data &amp; History
+                    </button>
+                    <button
                       onClick={async () => {
                         const r = await window.electronAPI?.clearBrowserCache?.();
                         setShowSettings(false);
@@ -524,17 +664,68 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
           </div>
         </div>
 
-        <button 
-          onClick={handleCapture}
-          className="bg-primary text-on-primary px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-2 shadow-lg hover:opacity-90 active:scale-95 transition-all ml-1"
-        >
-          <Plus className="w-4 h-4" />
-          Capture
-        </button>
+        {/* Capture button (hidden in Ignoto tabs) + New Tab dropdown */}
+        <div className="flex items-center gap-1 ml-1">
+          {!activeTab?.isIgnoto && (
+            <button
+              onClick={handleCapture}
+              className="bg-primary text-on-primary px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-2 shadow-lg hover:opacity-90 active:scale-95 transition-all"
+            >
+              <Plus className="w-4 h-4" />
+              Capture
+            </button>
+          )}
+
+          {/* New Tab dropdown */}
+          <div className="relative">
+            <button
+              onClick={e => { e.stopPropagation(); setShowNewTabMenu(m => !m); }}
+              className={`flex items-center gap-0.5 px-2 py-2 rounded-lg font-bold text-xs transition-all ${globalIgnoto ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-surface-container-high hover:bg-surface-container-highest text-on-surface-variant'}`}
+              title="New Tab"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <ChevronDown className="w-3 h-3 opacity-60" />
+            </button>
+            <AnimatePresence>
+              {showNewTabMenu && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                  className="absolute right-0 top-full mt-1 w-56 bg-surface-container-lowest border border-outline-variant/20 rounded-xl shadow-2xl z-50 overflow-hidden"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <button
+                    onClick={() => { handleAddTab(); setShowNewTabMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-xs font-bold hover:bg-surface-container-high transition-colors text-left"
+                  >
+                    <Globe className="w-4 h-4 text-primary shrink-0" />
+                    <div>
+                      <p className="font-bold">New Tab</p>
+                      <p className="text-[10px] text-outline font-normal">Standard browsing</p>
+                    </div>
+                  </button>
+                  <div className="h-px bg-outline-variant/10" />
+                  <button
+                    onClick={handleAddIgnotoTab}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-xs font-bold hover:bg-indigo-950/80 transition-colors text-left group"
+                  >
+                    <Ghost className="w-4 h-4 text-indigo-400 shrink-0 group-hover:animate-pulse" />
+                    <div>
+                      <p className="font-bold text-indigo-300">Deep Ignoto Tab</p>
+                      <p className="text-[10px] text-indigo-500 font-normal">DNS privacy · No trace · Spoofed UA</p>
+                    </div>
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
       </div>
 
+
       {/* Tabs Bar */}
-      <div className="bg-surface-container-low flex items-center gap-0.5 px-2 pt-1 border-b border-outline-variant/10">
+      <div className={`flex items-center gap-0.5 px-2 pt-1 border-b transition-all duration-500 ${activeTab?.isIgnoto ? 'bg-indigo-950/90 border-indigo-800/40' : 'bg-surface-container-low border-outline-variant/10'}`}>
         {tabs.map((tab) => (
           <div
             key={tab.id}
@@ -544,18 +735,27 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
             }}
             className={`
               group flex items-center gap-2 px-4 py-2 rounded-t-xl text-xs font-bold cursor-pointer transition-all min-w-[120px] max-w-[200px]
-              ${activeTabId === tab.id ? 'bg-surface-container-lowest text-primary border-t border-x border-outline-variant/10' : 'text-on-surface-variant hover:bg-surface-container-high'}
+              ${tab.isIgnoto
+                ? activeTabId === tab.id
+                  ? 'bg-indigo-900/80 text-indigo-200 border-t border-x border-indigo-700/40'
+                  : 'text-indigo-400 hover:bg-indigo-900/50'
+                : activeTabId === tab.id
+                  ? 'bg-surface-container-lowest text-primary border-t border-x border-outline-variant/10'
+                  : 'text-on-surface-variant hover:bg-surface-container-high'
+              }
             `}
           >
             {tab.isLoading ? (
-              <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+              <Loader2 className={`w-3 h-3 animate-spin shrink-0 ${tab.isIgnoto ? 'text-indigo-400' : ''}`} />
+            ) : tab.isIgnoto ? (
+              <Ghost className="w-3 h-3 text-indigo-400 shrink-0" />
             ) : tab.isSleeping ? (
               <Moon className="w-3 h-3 text-outline shrink-0" />
             ) : (
               <Globe className="w-3 h-3 shrink-0" />
             )}
             <span className="truncate flex-1">{tab.title}</span>
-            <button 
+            <button
               onClick={(e) => handleCloseTab(tab.id, e)}
               className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-outline-variant/20 rounded-full transition-all"
             >
@@ -563,8 +763,9 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
             </button>
           </div>
         ))}
-        <button onClick={handleAddTab} className="p-2 hover:bg-surface-container-high rounded-full transition-colors ml-1">
-          <Plus className="w-4 h-4 text-outline" />
+        {/* Quick new tab button in tab bar */}
+        <button onClick={handleAddTab} className={`p-2 rounded-full transition-colors ml-1 ${globalIgnoto ? 'hover:bg-indigo-800/50 text-indigo-400' : 'hover:bg-surface-container-high text-outline'}`}>
+          <Plus className="w-4 h-4" />
         </button>
       </div>
 
@@ -595,16 +796,20 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
                     src={tab.initialUrl}
                     className="w-full h-full transition-opacity duration-300"
                     // @ts-ignore
-                    partition="persist:browser"
-                    // Allow popups for known providers
+                    partition={tab.isIgnoto && tab.ignotoPartition ? tab.ignotoPartition : 'persist:browser'}
+                    // Allow popups for known providers (not in Ignoto tabs)
                     // @ts-ignore
-                    allowpopups={(tab.url?.includes('google.com') || tab.url?.includes('youtube.com') || tab.url?.includes('github.com')) ? 'true' : undefined}
-                    // For YouTube, enable autoplay + disable background throttling to avoid blank/black playback
+                    allowpopups={!tab.isIgnoto && (tab.url?.includes('google.com') || tab.url?.includes('youtube.com') || tab.url?.includes('github.com')) ? 'true' : undefined}
+                    // For YouTube, enable autoplay + disable background throttling
                     // @ts-ignore
                     webpreferences={(tab.url?.includes('youtube.com') || tab.url?.includes('youtu.be')) ? 'autoplayPolicy=no-user-gesture-required, backgroundThrottling=false' : undefined}
-                    // Use a modern desktop UA for watch pages to avoid mobile/embedded fallbacks
+                    // Ignoto: spoof UA. YouTube: use desktop UA. Otherwise: default.
                     // @ts-ignore
-                    useragent={(tab.url?.includes('youtube.com') || tab.url?.includes('youtu.be')) ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' : undefined}
+                    useragent={tab.isIgnoto
+                      ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+                      : (tab.url?.includes('youtube.com') || tab.url?.includes('youtu.be'))
+                        ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+                        : undefined}
                   />
                 )}
               </div>
@@ -695,19 +900,44 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
         </AnimatePresence>
       </div>
 
-      {/* Status Bar */}
-      <div className="bg-surface-container-low border-t border-outline-variant/10 px-4 py-1 flex items-center justify-between text-[10px] font-bold text-outline">
+      {/* Status Bar — Ignoto-aware */}
+      <div className={`border-t px-4 py-1 flex items-center justify-between text-[10px] font-bold transition-all duration-500 ${activeTab?.isIgnoto ? 'bg-indigo-950/90 border-indigo-800/40 text-indigo-300' : 'bg-surface-container-low border-outline-variant/10 text-outline'}`}>
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1.5">
-            <div className={`w-1.5 h-1.5 rounded-full ${activeTab?.url.startsWith('https://') ? 'bg-green-500' : 'bg-amber-500'}`}></div>
-            <span>{activeTab?.url.startsWith('https://') ? 'Secure (HTTPS)' : 'Not Secure'}</span>
-          </div>
-          {activeTab?.isLoading && <span className="text-primary animate-pulse">Loading...</span>}
+          {activeTab?.isIgnoto ? (
+            <div className="flex items-center gap-2">
+              <Ghost className="w-3 h-3 text-indigo-400 animate-pulse" />
+              <span className="text-indigo-300 font-black">Deep Ignoto</span>
+              <span className="text-indigo-500">·</span>
+              <span className="text-indigo-500">No data stored on this device</span>
+              {ignotoStats && (
+                <>
+                  <span className="text-indigo-500">·</span>
+                  <span className="text-indigo-400 flex items-center gap-1">
+                    <WifiOff className="w-3 h-3" />
+                    {ignotoStats.blockedRequests} blocked
+                  </span>
+                  <span className="text-indigo-400 flex items-center gap-1">
+                    <Activity className="w-3 h-3" />
+                    {ignotoStats.dohLookups} DoH
+                  </span>
+                </>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-1.5">
+                <div className={`w-1.5 h-1.5 rounded-full ${activeTab?.url.startsWith('https://') ? 'bg-green-500' : 'bg-amber-500'}`}></div>
+                <span>{activeTab?.url.startsWith('https://') ? 'Secure (HTTPS)' : 'Not Secure'}</span>
+              </div>
+              {activeTab?.isLoading && <span className="text-primary animate-pulse">Loading...</span>}
+            </>
+          )}
         </div>
         <div className="flex items-center gap-4">
           <span className="opacity-60">{isElectron ? 'Chromium Engine' : 'Web Fallback'}</span>
           <span>{Math.round(zoomLevel * 100)}% zoom</span>
-          <span className="opacity-40">{searchEngine} search</span>
+          {!activeTab?.isIgnoto && <span className="opacity-40">{searchEngine} search</span>}
+          {activeTab?.isIgnoto && <span className="text-indigo-500">{searchEngine} search · DoH via 1.1.1.1</span>}
         </div>
       </div>
 
@@ -720,6 +950,167 @@ export default function Browser({ initialUrl, onNavigate, isActive = true }: Bro
             onCapture={doCapture}
             onClose={() => setShowCaptureDialog(false)}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Browsing Data & History Modal */}
+      <AnimatePresence>
+        {showBrowsingDataModal && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-8 bg-on-surface/40 backdrop-blur-sm" onClick={() => setShowBrowsingDataModal(false)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-surface-container-lowest p-6 rounded-2xl shadow-2xl max-w-2xl w-full h-[600px] flex flex-col space-y-4 text-on-surface"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-outline-variant/10 pb-3">
+                <div className="flex items-center gap-2">
+                  <History className="w-5 h-5 text-primary" />
+                  <h3 className="font-bold text-lg font-headline">Browsing Data & History</h3>
+                </div>
+                <button onClick={() => setShowBrowsingDataModal(false)} className="p-1 hover:bg-surface-container-high rounded-full">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex gap-2 border-b border-outline-variant/10 pb-2">
+                <button
+                  onClick={() => setModalTab('history')}
+                  className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${modalTab === 'history' ? 'bg-primary text-on-primary font-bold' : 'hover:bg-surface-container-high text-outline'}`}
+                >
+                  History
+                </button>
+                <button
+                  onClick={() => setModalTab('cookies')}
+                  className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${modalTab === 'cookies' ? 'bg-primary text-on-primary font-bold' : 'hover:bg-surface-container-high text-outline'}`}
+                >
+                  Cookies & Cache
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-hidden flex flex-col">
+                {modalTab === 'history' ? (
+                  <div className="flex-1 flex flex-col overflow-hidden space-y-3">
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-outline" />
+                        <input
+                          type="text"
+                          value={historySearch}
+                          onChange={e => setHistorySearch(e.target.value)}
+                          placeholder="Search history..."
+                          className="w-full bg-surface-container-low border border-outline-variant/20 rounded-lg py-1.5 pl-9 pr-4 text-xs focus:outline-none focus:border-primary text-on-surface"
+                        />
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (confirm('Are you sure you want to clear all history?')) {
+                            await window.electronAPI?.clearHistory();
+                            fetchBrowsingDataAndHistory();
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-xs font-bold hover:bg-red-100 transition-all flex items-center gap-1 shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Clear All
+                      </button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-2 pr-1 no-scrollbar">
+                      {historyData.filter(h => 
+                        (h.title?.toLowerCase() || '').includes(historySearch.toLowerCase()) || 
+                        (h.url?.toLowerCase() || '').includes(historySearch.toLowerCase())
+                      ).length === 0 ? (
+                        <p className="text-xs text-outline text-center py-8 italic">No history items found.</p>
+                      ) : (
+                        historyData
+                          .filter(h => 
+                            (h.title?.toLowerCase() || '').includes(historySearch.toLowerCase()) || 
+                            (h.url?.toLowerCase() || '').includes(historySearch.toLowerCase())
+                          )
+                          .map(h => (
+                            <div key={h.id} className="flex items-center justify-between p-3 rounded-xl bg-surface-container-low hover:bg-surface-container-high transition-all">
+                              <button
+                                onClick={() => {
+                                  setTabs(tabs.map(t => t.id === activeTabId ? { ...t, url: h.url, title: h.title } : t));
+                                  setUrlInput(h.url);
+                                  if (webviewRefs.current[activeTabId]) {
+                                    webviewRefs.current[activeTabId].loadURL(h.url);
+                                  }
+                                  setShowBrowsingDataModal(false);
+                                }}
+                                className="flex-1 text-left min-w-0 mr-2 group"
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-xs text-on-surface group-hover:text-primary transition-colors truncate block">
+                                    {h.title}
+                                  </span>
+                                  <span className="text-[10px] text-outline-variant shrink-0 font-normal">
+                                    {new Date(h.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                                <span className="text-[10px] text-outline truncate block mt-0.5 font-normal">{h.url}</span>
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  await window.electronAPI?.deleteHistoryEntry(h.id);
+                                  fetchBrowsingDataAndHistory();
+                                }}
+                                className="p-1.5 hover:bg-red-50 text-red-500 rounded-lg transition-all shrink-0"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col overflow-hidden space-y-4">
+                    <div className="p-4 rounded-xl bg-surface-container-low flex items-center justify-between shrink-0">
+                      <div>
+                        <h4 className="text-xs font-bold text-on-surface">Browser Cache Size</h4>
+                        <p className="text-sm font-black text-primary mt-1">
+                          {browsingData ? (browsingData.cacheSize / (1024 * 1024)).toFixed(2) : '0.00'} MB
+                        </p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          const r = await window.electronAPI?.clearBrowserCache?.();
+                          alert(r?.success ? 'Cache and storage cleared!' : `Failed: ${r?.error}`);
+                          fetchBrowsingDataAndHistory();
+                        }}
+                        className="px-4 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold hover:bg-red-100 transition-all flex items-center gap-1.5"
+                      >
+                        <Trash2 className="w-4 h-4" /> Clear Cache & Cookies
+                      </button>
+                    </div>
+
+                    <div className="flex-1 flex flex-col overflow-hidden">
+                      <h4 className="text-[10px] font-bold text-outline uppercase tracking-widest block mb-2">Cookies ({browsingData?.cookies?.length || 0})</h4>
+                      <div className="flex-1 overflow-y-auto border border-outline-variant/10 rounded-xl bg-surface-container-low divide-y divide-outline-variant/10 pr-1 no-scrollbar">
+                        {!browsingData?.cookies || browsingData.cookies.length === 0 ? (
+                          <p className="text-xs text-outline text-center py-8 italic">No cookies stored.</p>
+                        ) : (
+                          browsingData.cookies.map((c, idx) => (
+                            <div key={idx} className="p-3 text-xs space-y-1">
+                              <div className="flex justify-between items-start">
+                                <span className="font-bold text-on-surface truncate pr-2" title={c.name}>{c.name}</span>
+                                <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-mono shrink-0">{c.domain}</span>
+                              </div>
+                              <p className="text-[10px] text-outline break-all font-mono line-clamp-2">{c.value}</p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>

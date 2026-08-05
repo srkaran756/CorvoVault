@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS = (profileId: string): AppSettings => ({
   profileId,
   studyTargetMinutes: 240,
   focusTimeMinutes: 25,
+  disableLocalAI: false,
 });
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);

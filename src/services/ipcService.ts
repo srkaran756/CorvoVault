@@ -36,6 +36,7 @@ export const ipcService = {
     getVideoProgress: (materialId: string) => invoke('vault:getVideoProgress', materialId),
     saveVideoProgress: (progress: any) => invoke('vault:saveVideoProgress', progress),
     runIntegrityCheck: (profileId: string) => invoke('vault:runIntegrityCheck', profileId),
+    updateMaterial: (id: string, updates: Partial<Material>) => invoke('vault:updateMaterial', id, updates),
   },
   topics: {
     getAll: (profileId: string) => invoke('topics:getAll', profileId),

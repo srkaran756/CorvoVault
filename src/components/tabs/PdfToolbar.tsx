@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -81,11 +81,26 @@ export default function PdfToolbar({
   onSetWorkspaceMode,
 }: PdfToolbarProps) {
   const pageInputRef = useRef<HTMLInputElement>(null);
+  const [inputValue, setInputValue] = useState(String(currentPage));
+
+  useEffect(() => {
+    setInputValue(String(currentPage));
+  }, [currentPage]);
+
+  const commitPage = () => {
+    const v = parseInt(inputValue, 10);
+    if (!isNaN(v) && v >= 1 && v <= numPages) {
+      jumpToPage(v);
+    } else {
+      // Revert to current page if input is invalid, empty, or out of bounds
+      setInputValue(String(currentPage));
+    }
+  };
 
   const modes = [
     { key: 'read', label: 'Read', icon: <BookOpen className="w-3.5 h-3.5" />, tooltip: 'Read Mode: PDF & Pages list' },
-    { key: 'study', label: 'Study', icon: <Sparkles className="w-3.5 h-3.5 text-yellow-300" />, tooltip: 'Study Mode: PDF & AI Tutor Chat' },
-    { key: 'research', label: 'Research', icon: <StickyNote className="w-3.5 h-3.5" />, tooltip: 'Research Mode: PDF & Lecture Notes' },
+    { key: 'study', label: 'Ask/Learn', icon: <Sparkles className="w-3.5 h-3.5 text-yellow-300" />, tooltip: 'Ask/Learn Mode: PDF & AI Tutor Chat' },
+    { key: 'research', label: 'Note panel', icon: <StickyNote className="w-3.5 h-3.5" />, tooltip: 'Note Panel Mode: PDF & Lecture Notes' },
     { key: 'blackboard', label: 'Board', icon: <Presentation className="w-3.5 h-3.5" />, tooltip: 'Board Mode: Blackboard Canvas' },
     { key: 'deep', label: 'Focus', icon: <Maximize className="w-3.5 h-3.5" />, tooltip: 'Deep Focus: Document only' },
   ] as const;
@@ -111,14 +126,22 @@ export default function PdfToolbar({
             <div className="flex items-center gap-1 px-1.5">
               <input
                 ref={pageInputRef}
-                type="number"
-                min={1}
-                max={numPages}
-                value={currentPage}
+                type="text"
+                value={inputValue}
                 onChange={e => {
-                  const v = parseInt(e.target.value);
-                  if (v >= 1 && v <= numPages) jumpToPage(v);
+                  // Allow empty string or digits only
+                  const val = e.target.value;
+                  if (val === '' || /^\d+$/.test(val)) {
+                    setInputValue(val);
+                  }
                 }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    commitPage();
+                    pageInputRef.current?.blur();
+                  }
+                }}
+                onBlur={commitPage}
                 className="w-9 text-center text-[11px] font-bold bg-surface rounded border border-outline-variant/20 focus:outline-none focus:border-primary py-0.5"
               />
               <span className="text-[10px] text-outline">/ {numPages}</span>

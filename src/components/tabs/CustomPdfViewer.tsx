@@ -52,6 +52,7 @@ import {
   profileCache
 } from '../../lib/pdfSelectionEngine';
 import { findFuzzyTargetItem } from '../../lib/highlightMatcher';
+import { getOrGenerateOcrTextItems } from '../../lib/ocrService';
 
 interface CustomPdfViewerProps {
   material: Material;
@@ -59,6 +60,9 @@ interface CustomPdfViewerProps {
   getFileSrc: (path: string | undefined | null) => string;
   isNotesCollapsed?: boolean;
   setIsNotesCollapsed?: (collapsed: boolean) => void;
+  isNotesPinned?: boolean;
+  onAddNoteFromSelection?: (text: string) => void;
+  onAddImageFromSelection?: (dataUrl: string) => void;
 }
 
 // Interfaces imported from hooks
@@ -250,13 +254,108 @@ function findRectsForTextCV(
 }
 
 // ─── MAIN COMPONENT ─────────────────────────────────────────────────────────
-export default function CustomPdfViewer({
+const CustomPdfViewer = React.forwardRef<any, CustomPdfViewerProps>(function CustomPdfViewer({
   material,
   pdfPath,
   getFileSrc,
   isNotesCollapsed,
   setIsNotesCollapsed,
-}: CustomPdfViewerProps) {
+  isNotesPinned = false,
+  onAddNoteFromSelection,
+  onAddImageFromSelection,
+}, ref) {
+  const [cropModeActive, setCropModeActive] = useState(false);
+  const [cropStart, setCropStart] = useState<{ x: number; y: number } | null>(null);
+  const [cropEnd, setCropEnd] = useState<{ x: number; y: number } | null>(null);
+
+  const handleCropMouseUp = async (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!cropStart || !cropEnd) return;
+    const overlayEl = e.currentTarget;
+    const overlayRect = overlayEl.getBoundingClientRect();
+
+    const x1 = Math.min(cropStart.x, cropEnd.x);
+    const y1 = Math.min(cropStart.y, cropEnd.y);
+    const w = Math.abs(cropStart.x - cropEnd.x);
+    const h = Math.abs(cropStart.y - cropEnd.y);
+
+    setCropStart(null);
+    setCropEnd(null);
+    setCropModeActive(false);
+
+    if (w <= 5 || h <= 5) return;
+
+    // Find which page canvas is under the selection center.
+    // Temporarily hide the overlay so elementsFromPoint can see through it.
+    const centerX = overlayRect.left + x1 + w / 2;
+    const centerY = overlayRect.top + y1 + h / 2;
+
+    const prevPE = overlayEl.style.pointerEvents;
+    overlayEl.style.pointerEvents = 'none';
+    const pageEl = document.elementsFromPoint(centerX, centerY).find(
+      (el) => el.id?.startsWith(`pdf-page-wrapper-${material.id}-`)
+    );
+    overlayEl.style.pointerEvents = prevPE;
+
+    if (!pageEl) return;
+
+    const pdfCanvas = pageEl.querySelector('canvas');
+    if (!pdfCanvas) return;
+
+    // Map the overlay drag rect to coordinates relative to the page element
+    const pageRect = pageEl.getBoundingClientRect();
+    const relX1 = overlayRect.left + x1 - pageRect.left;
+    const relY1 = overlayRect.top + y1 - pageRect.top;
+    const relW = w;
+    const relH = h;
+
+    const scaleX = (pdfCanvas as HTMLCanvasElement).width / pageRect.width;
+    const scaleY = (pdfCanvas as HTMLCanvasElement).height / pageRect.height;
+
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = Math.max(1, relW * scaleX);
+    cropCanvas.height = Math.max(1, relH * scaleY);
+    const cropCtx = cropCanvas.getContext('2d');
+    if (!cropCtx) return;
+
+    cropCtx.drawImage(
+      pdfCanvas as HTMLCanvasElement,
+      Math.max(0, relX1 * scaleX),
+      Math.max(0, relY1 * scaleY),
+      relW * scaleX,
+      relH * scaleY,
+      0, 0,
+      cropCanvas.width,
+      cropCanvas.height
+    );
+
+    const dataUrl = cropCanvas.toDataURL('image/png');
+    if (onAddImageFromSelection) onAddImageFromSelection(dataUrl);
+  };
+
+  React.useImperativeHandle(ref, () => ({
+    startCropMode: () => {
+      setCropModeActive(true);
+    },
+    captureCurrentPage: async () => {
+      const pageWrapper = document.getElementById(`pdf-page-wrapper-${material.id}-${currentPage}`);
+      if (!pageWrapper) return null;
+      const canvas = pageWrapper.querySelector('canvas');
+      if (!canvas) return null;
+      return canvas.toDataURL('image/png');
+    }
+  }));
+
+  useEffect(() => {
+    if (!cropModeActive) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setCropModeActive(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [cropModeActive]);
+
   const { settings } = useUserSettings();
   const geminiKey = settings?.geminiKey || '';
   const openrouterKey = settings?.openrouterKey || '';
@@ -285,6 +384,11 @@ export default function CustomPdfViewer({
   // View state
   const [zoom, setZoom] = useState(1.2);
   const [rotation, setRotation] = useState(0);
+
+  // Track previous zoom/rotation and cursor position for anchor-based zoom scrolling
+  const prevZoomRef = useRef(zoom);
+  const prevRotationRef = useRef(rotation);
+  const zoomAnchorRef = useRef<{ mouseX: number; mouseY: number } | null>(null);
   const [readingFilter, setReadingFilter] = useState<'default' | 'sepia' | 'dark'>('default');
   const [sidebarTab, setSidebarTab] = useState<'outline' | 'thumbnails' | 'bookmarks'>('thumbnails');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -336,12 +440,12 @@ export default function CustomPdfViewer({
   const [boardActionQueue, setBoardActionQueue] = useState<BoardAction[]>([]);
   const blackboardRef = useRef<BlackboardCanvasHandle>(null);
 
-  // Enforce panel management logic (Only one right-side panel open at a time)
+  // Enforce panel management logic (Only one right-side panel open at a time, unless notes are pinned)
   const handleSetAiPaneOpen = (open: boolean) => {
     setIsAiPaneOpen(open);
     if (open) {
       setIsSidebarOpen(false);
-      setNotesCollapsed(true);
+      if (!isNotesPinned) setNotesCollapsed(true);
       setIsBlackboardOpen(false);
       setIsBlackboardFullScreen(false);
     }
@@ -355,7 +459,7 @@ export default function CustomPdfViewer({
     if (open) {
       setIsSidebarOpen(false);
       setIsAiPaneOpen(false);
-      setNotesCollapsed(true);
+      if (!isNotesPinned) setNotesCollapsed(true);
     }
   };
 
@@ -363,7 +467,7 @@ export default function CustomPdfViewer({
     setIsSidebarOpen(open);
     if (open) {
       setIsAiPaneOpen(false);
-      setNotesCollapsed(true);
+      if (!isNotesPinned) setNotesCollapsed(true);
       setIsBlackboardOpen(false);
       setIsBlackboardFullScreen(false);
     }
@@ -439,204 +543,219 @@ export default function CustomPdfViewer({
     const process = async () => {
       for (const annotation of professorAnnotations) {
         try {
-          const page = await pdfDoc.getPage(annotation.page);
-          const tc = await page.getTextContent();
-          const viewport = page.getViewport({ scale: 1 });
-          const items = tc.items as any[];
-
-          const pdfjsLib = (window as any).pdfjsLib;
-          const util = pdfjsLib?.Util;
-          const processedItems = items
-            .map(item => {
-              if (!item?.str) return null;
-
-              const transform = util?.transform
-                ? util.transform(viewport.transform, item.transform)
-                : multiplyTransforms(viewport.transform, item.transform);
-
-              const fontHeight = Math.hypot(transform[2], transform[3]) || Math.abs(transform[3]) || 10;
-              const angle = Math.atan2(transform[1], transform[0]);
-              const left = transform[4];
-              const top = transform[5] - fontHeight;
-              const visualTop = transform[5] - fontHeight * 0.82;
-              const width = Math.max(8, (item.width || item.str.length * fontHeight * 0.55) * viewport.scale);
-              const fontName = item.fontName;
-              const style = tc.styles?.[fontName];
-              const fontFamily = style?.fontFamily || 'sans-serif';
-
-              return {
-                item,
-                transform,
-                fontHeight,
-                angle,
-                left,
-                top,
-                visualTop,
-                width,
-                fontFamily,
-              };
-            })
-            .filter(Boolean) as any[];
-
-          // Row-based sorting to match DOM ordering
-          const sortedFH = processedItems.map((i: any) => i.fontHeight).sort((a: number, b: number) => a - b);
-          const medFH: number = sortedFH.length > 0 ? sortedFH[Math.floor(sortedFH.length / 2)] : 12;
-          const rowBucket: number = Math.max(4, medFH * 0.65);
-
-          processedItems.forEach((item: any) => {
-            item._rowKey = Math.round(item.top / rowBucket);
-          });
-
-          processedItems.sort((a: any, b: any) => {
-            if (a._rowKey !== b._rowKey) return a._rowKey - b._rowKey;
-            return a.left - b.left;
-          });
-
-          processedItems.forEach((item: any) => { delete item._rowKey; });
-
-          // Try multi-line/span exact/fuzzy matching
           let rects: { x: number; y: number; w: number; h: number }[] = [];
-          
-          let concatText = '';
-          const charMap: { itemIndex: number; charIndex: number }[] = [];
 
-          processedItems.forEach((item, itemIdx) => {
-            // Use the ORIGINAL item string so charIndex in charMap always refers
-            // to the original str. Ligature expansion happens during normalization
-            // (below) without shifting any positions.
-            const str = item.item.str || '';
-            for (let charIdx = 0; charIdx < str.length; charIdx++) {
-              concatText += str[charIdx];
-              charMap.push({ itemIndex: itemIdx, charIndex: charIdx });
-            }
-          });
-
-          // Normalize for mapping — expand PDF ligature glyphs INLINE so
-          // ﬁ/ﬂ/ﬀ etc. map to their ASCII equivalents without shifting the
-          // charMap positions (all expanded chars point to the same original i).
-          const LIGATURE_MAP: Record<string, string> = {
-            '\uFB00': 'ff', '\uFB01': 'fi', '\uFB02': 'fl',
-            '\uFB03': 'ffi', '\uFB04': 'ffl', '\uFB05': 'st', '\uFB06': 'st',
-            '\u00AD': '', // soft hyphen — expand to nothing
-          };
-          const normalToOriginal: number[] = [];
-          let normalizedConcat = '';
-          for (let i = 0; i < concatText.length; i++) {
-            const ch = concatText[i];
-            const expanded = LIGATURE_MAP[ch] ?? ch; // expand or passthrough
-            for (const ec of expanded) {
-              const lower = ec.toLowerCase();
-              if (/[a-z0-9]/.test(lower)) {
-                normalizedConcat += lower;
-                normalToOriginal.push(i); // ALL expanded chars → same original pos
+          if (annotation.chunk_id) {
+            const api = (window as any).electronAPI;
+            if (api) {
+              const meta = await api.invoke('professor:runRetrievalTool', material.id, 'lookup_metadata', { chunk_id: annotation.chunk_id });
+              if (Array.isArray(meta) && meta.length > 0 && meta[0].bbox_x !== null && meta[0].bbox_x !== undefined) {
+                const dbChunk = meta[0];
+                rects = [{
+                  x: dbChunk.bbox_x,
+                  y: dbChunk.bbox_y,
+                  w: dbChunk.bbox_w,
+                  h: dbChunk.bbox_h
+                }];
               }
             }
           }
 
-          const normalizedTarget = expandPdfLigaturesCV(annotation.targetText).toLowerCase().replace(/[^a-z0-9]/g, '');
-          const matchIdx = normalizedConcat.indexOf(normalizedTarget);
+          if (rects.length === 0) {
+            const page = await pdfDoc.getPage(annotation.page);
+            const tc = await page.getTextContent();
+            const viewport = page.getViewport({ scale: 1 });
+            const items = tc.items as any[];
 
-          if (matchIdx !== -1 && normalizedTarget.length > 0) {
-            const startConcatIdx = normalToOriginal[matchIdx];
-            const endConcatIdx = normalToOriginal[matchIdx + normalizedTarget.length - 1] + 1;
-            
-            const startPoint = charMap[startConcatIdx];
-            const endPoint = endConcatIdx < charMap.length 
-              ? charMap[endConcatIdx] 
-              : { itemIndex: processedItems.length - 1, charIndex: processedItems[processedItems.length - 1].item.str.length };
+            const pdfjsLib = (window as any).pdfjsLib;
+            const util = pdfjsLib?.Util;
+            const processedItems = items
+              .map(item => {
+                if (!item?.str) return null;
 
-            if (startPoint && endPoint) {
-              rects = getCustomSelectionRects(
-                { start: startPoint, end: endPoint },
-                processedItems,
-                viewport.width,
-                viewport.height
-              );
+                const transform = util?.transform
+                  ? util.transform(viewport.transform, item.transform)
+                  : multiplyTransforms(viewport.transform, item.transform);
+
+                const fontHeight = Math.hypot(transform[2], transform[3]) || Math.abs(transform[3]) || 10;
+                const angle = Math.atan2(transform[1], transform[0]);
+                const left = transform[4];
+                const top = transform[5] - fontHeight;
+                const visualTop = transform[5] - fontHeight * 0.82;
+                const width = Math.max(8, (item.width || item.str.length * fontHeight * 0.55) * viewport.scale);
+                const fontName = item.fontName;
+                const style = tc.styles?.[fontName];
+                const fontFamily = style?.fontFamily || 'sans-serif';
+
+                return {
+                  item,
+                  transform,
+                  fontHeight,
+                  angle,
+                  left,
+                  top,
+                  visualTop,
+                  width,
+                  fontFamily,
+                };
+              })
+              .filter(Boolean) as any[];
+
+            // Row-based sorting to match DOM ordering
+            const sortedFH = processedItems.map((i: any) => i.fontHeight).sort((a: number, b: number) => a - b);
+            const medFH: number = sortedFH.length > 0 ? sortedFH[Math.floor(sortedFH.length / 2)] : 12;
+            const rowBucket: number = Math.max(4, medFH * 0.65);
+
+            processedItems.forEach((item: any) => {
+              item._rowKey = Math.round(item.top / rowBucket);
+            });
+
+            processedItems.sort((a: any, b: any) => {
+              if (a._rowKey !== b._rowKey) return a._rowKey - b._rowKey;
+              return a.left - b.left;
+            });
+
+            processedItems.forEach((item: any) => { delete item._rowKey; });
+
+            // Try multi-line/span exact/fuzzy matching
+            let concatText = '';
+            const charMap: { itemIndex: number; charIndex: number }[] = [];
+
+            processedItems.forEach((item, itemIdx) => {
+              const str = item.item.str || '';
+              for (let charIdx = 0; charIdx < str.length; charIdx++) {
+                concatText += str[charIdx];
+                charMap.push({ itemIndex: itemIdx, charIndex: charIdx });
+              }
+            });
+
+            // Normalize for mapping — expand PDF ligature glyphs INLINE so
+            // ﬁ/ﬂ/ﬀ etc. map to their ASCII equivalents without shifting the
+            // charMap positions (all expanded chars point to the same original i).
+            const LIGATURE_MAP: Record<string, string> = {
+              '\uFB00': 'ff', '\uFB01': 'fi', '\uFB02': 'fl',
+              '\uFB03': 'ffi', '\uFB04': 'ffl', '\uFB05': 'st', '\uFB06': 'st',
+              '\u00AD': '', // soft hyphen — expand to nothing
+            };
+            const normalToOriginal: number[] = [];
+            let normalizedConcat = '';
+            for (let i = 0; i < concatText.length; i++) {
+              const ch = concatText[i];
+              const expanded = LIGATURE_MAP[ch] ?? ch; // expand or passthrough
+              for (const ec of expanded) {
+                const lower = ec.toLowerCase();
+                if (/[a-z0-9]/.test(lower)) {
+                  normalizedConcat += lower;
+                  normalToOriginal.push(i); // ALL expanded chars → same original pos
+                }
+              }
             }
-          }
 
-          // Try sliding window word-level fuzzy matching
-          const targetWords = annotation.targetText.split(/\s+/).filter(Boolean);
-          if (rects.length === 0 && targetWords.length > 0) {
-            const words: { text: string; startIdx: number; endIdx: number }[] = [];
-            const regex = /\S+/g;
-            let match;
-            while ((match = regex.exec(concatText)) !== null) {
-              words.push({
-                text: match[0],
-                startIdx: match.index,
-                endIdx: match.index + match[0].length
-              });
+            const normalizedTarget = expandPdfLigaturesCV(annotation.targetText).toLowerCase().replace(/[^a-z0-9]/g, '');
+            const matchIdx = normalizedConcat.indexOf(normalizedTarget);
+
+            if (matchIdx !== -1 && normalizedTarget.length > 0) {
+              const startConcatIdx = normalToOriginal[matchIdx];
+              const endConcatIdx = normalToOriginal[matchIdx + normalizedTarget.length - 1] + 1;
+              
+              const startPoint = charMap[startConcatIdx];
+              const endPoint = endConcatIdx < charMap.length 
+                ? charMap[endConcatIdx] 
+                : { itemIndex: processedItems.length - 1, charIndex: processedItems[processedItems.length - 1].item.str.length };
+
+              if (startPoint && endPoint) {
+                rects = getCustomSelectionRects(
+                  { start: startPoint, end: endPoint },
+                  processedItems,
+                  viewport.width,
+                  viewport.height
+                );
+              }
             }
 
-            if (words.length > 0) {
-              const windowSize = Math.min(targetWords.length, words.length);
-              let bestWindowIdx = -1;
-              let bestWindowScore = 0;
+            // Try sliding window word-level fuzzy matching
+            const targetWords = annotation.targetText.split(/\s+/).filter(Boolean);
+            if (rects.length === 0 && targetWords.length > 0) {
+              const words: { text: string; startIdx: number; endIdx: number }[] = [];
+              const regex = /\S+/g;
+              let match;
+              while ((match = regex.exec(concatText)) !== null) {
+                words.push({
+                  text: match[0],
+                  startIdx: match.index,
+                  endIdx: match.index + match[0].length
+                });
+              }
 
-              for (let i = 0; i <= words.length - windowSize; i++) {
-                let score = 0;
-                for (let j = 0; j < windowSize; j++) {
-                  const wordA = words[i + j].text.toLowerCase().replace(/[^a-z0-9]/g, '');
-                  const wordB = targetWords[j].toLowerCase().replace(/[^a-z0-9]/g, '');
-                  if (wordA === wordB) {
-                    score += 1.0;
-                  } else if (wordA && wordB && (wordA.includes(wordB) || wordB.includes(wordA))) {
-                    score += 0.5;
+              if (words.length > 0) {
+                const windowSize = Math.min(targetWords.length, words.length);
+                let bestWindowIdx = -1;
+                let bestWindowScore = 0;
+
+                for (let i = 0; i <= words.length - windowSize; i++) {
+                  let score = 0;
+                  for (let j = 0; j < windowSize; j++) {
+                    const wordA = words[i + j].text.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const wordB = targetWords[j].toLowerCase().replace(/[^a-z0-9]/g, '');
+                    if (wordA === wordB) {
+                      score += 1.0;
+                    } else if (wordA && wordB && (wordA.includes(wordB) || wordB.includes(wordA))) {
+                      score += 0.5;
+                    }
+                  }
+                  const normScore = score / windowSize;
+                  if (normScore > bestWindowScore) {
+                    bestWindowScore = normScore;
+                    bestWindowIdx = i;
                   }
                 }
-                const normScore = score / windowSize;
-                if (normScore > bestWindowScore) {
-                  bestWindowScore = normScore;
-                  bestWindowIdx = i;
-                }
-              }
 
-              if (bestWindowIdx !== -1 && bestWindowScore >= 0.5) {
-                const startConcatIdx = words[bestWindowIdx].startIdx;
-                const endConcatIdx = words[bestWindowIdx + windowSize - 1].endIdx;
+                if (bestWindowIdx !== -1 && bestWindowScore >= 0.5) {
+                  const startConcatIdx = words[bestWindowIdx].startIdx;
+                  const endConcatIdx = words[bestWindowIdx + windowSize - 1].endIdx;
 
-                const startPoint = charMap[startConcatIdx];
-                const endPoint = endConcatIdx < charMap.length 
-                  ? charMap[endConcatIdx] 
-                  : { itemIndex: processedItems.length - 1, charIndex: processedItems[processedItems.length - 1].item.str.length };
+                  const startPoint = charMap[startConcatIdx];
+                  const endPoint = endConcatIdx < charMap.length 
+                    ? charMap[endConcatIdx] 
+                    : { itemIndex: processedItems.length - 1, charIndex: processedItems[processedItems.length - 1].item.str.length };
 
-                if (startPoint && endPoint) {
-                  rects = getCustomSelectionRects(
-                    { start: startPoint, end: endPoint },
-                    processedItems,
-                    viewport.width,
-                    viewport.height
-                  );
+                  if (startPoint && endPoint) {
+                    rects = getCustomSelectionRects(
+                      { start: startPoint, end: endPoint },
+                      processedItems,
+                      viewport.width,
+                      viewport.height
+                    );
+                  }
                 }
               }
             }
-          }
 
-          // Fallback if no multi-line span found (e.g. text got heavily altered or is short)
-          if (rects.length === 0) {
-            const targetLower = annotation.targetText.toLowerCase().slice(0, 60);
-            let bestItem: any = null;
-            let bestScore = 0;
+            // Fallback if no multi-line span found (e.g. text got heavily altered or is short)
+            if (rects.length === 0) {
+              const targetLower = annotation.targetText.toLowerCase().slice(0, 60);
+              let bestItem: any = null;
+              let bestScore = 0;
 
-            for (const item of processedItems) {
-              const str = item.item.str;
-              if (!str?.trim()) continue;
-              const itemLower = str.toLowerCase();
-              const score = itemLower.includes(targetLower) ? 1 :
-                targetLower.includes(itemLower) ? 0.6 :
-                levenshteinSimilarity(itemLower, targetLower);
-              if (score > bestScore) { bestScore = score; bestItem = item; }
-            }
+              for (const item of processedItems) {
+                const str = item.item.str;
+                if (!str?.trim()) continue;
+                const itemLower = str.toLowerCase();
+                const score = itemLower.includes(targetLower) ? 1 :
+                  targetLower.includes(itemLower) ? 0.6 :
+                  levenshteinSimilarity(itemLower, targetLower);
+                if (score > bestScore) { bestScore = score; bestItem = item; }
+              }
 
-            if (bestItem && bestScore >= 0.3) {
-              const bbox = {
-                x: bestItem.left / viewport.width,
-                y: bestItem.top / viewport.height,
-                w: bestItem.width / viewport.width,
-                h: bestItem.fontHeight / viewport.height,
-              };
-              rects = [bbox];
+              if (bestItem && bestScore >= 0.3) {
+                const bbox = {
+                  x: bestItem.left / viewport.width,
+                  y: bestItem.top / viewport.height,
+                  w: bestItem.width / viewport.width,
+                  h: bestItem.fontHeight / viewport.height,
+                };
+                rects = [bbox];
+              }
             }
           }
 
@@ -752,6 +871,107 @@ export default function CustomPdfViewer({
   useEffect(() => {
     currentPageRef.current = currentPage;
   }, [currentPage]);
+
+  // Adjust scroll top and left when zoom or rotation changes to prevent page jumps and keep content focused
+  useEffect(() => {
+    if (!scrollRoot) {
+      prevZoomRef.current = zoom;
+      prevRotationRef.current = rotation;
+      return;
+    }
+
+    const oldZoom = prevZoomRef.current;
+    const oldRotation = prevRotationRef.current;
+
+    if (oldZoom !== zoom || oldRotation !== rotation) {
+      // 1. Temporarily lock scroll tracking
+      isJumpingRef.current = true;
+      if (jumpTimeoutRef.current) {
+        clearTimeout(jumpTimeoutRef.current);
+        jumpTimeoutRef.current = null;
+      }
+
+      // 2. Adjust scroll position
+      if (oldZoom !== zoom) {
+        const ratio = zoom / oldZoom;
+        const anchor = zoomAnchorRef.current;
+
+        if (anchor) {
+          // Zoom relative to the mouse cursor position
+          const contentX = scrollRoot.scrollLeft + anchor.mouseX;
+          const contentY = scrollRoot.scrollTop + anchor.mouseY;
+
+          scrollRoot.scrollLeft = contentX * ratio - anchor.mouseX;
+          scrollRoot.scrollTop = contentY * ratio - anchor.mouseY;
+          zoomAnchorRef.current = null;
+        } else {
+          // Zoom relative to the center of the viewport
+          const containerRect = scrollRoot.getBoundingClientRect();
+          const centerX = containerRect.width / 2;
+          const centerY = containerRect.height / 2;
+
+          const contentX = scrollRoot.scrollLeft + centerX;
+          const contentY = scrollRoot.scrollTop + centerY;
+
+          scrollRoot.scrollLeft = contentX * ratio - centerX;
+          scrollRoot.scrollTop = contentY * ratio - centerY;
+        }
+      } else if (oldRotation !== rotation) {
+        const pageNum = currentPageRef.current;
+        const el = document.getElementById(`pdf-page-wrapper-${material.id}-${pageNum}`);
+        if (el) {
+          const containerRect = scrollRoot.getBoundingClientRect();
+          const elRect = el.getBoundingClientRect();
+          const scrollTo = Math.max(0, scrollRoot.scrollTop + (elRect.top - containerRect.top) - 16);
+          scrollRoot.scrollTop = scrollTo;
+        }
+      }
+
+      // 3. Update refs
+      prevZoomRef.current = zoom;
+      prevRotationRef.current = rotation;
+
+      // 4. Release scroll lock after a short delay
+      jumpTimeoutRef.current = setTimeout(() => {
+        isJumpingRef.current = false;
+        jumpTimeoutRef.current = null;
+      }, 150);
+    }
+  }, [zoom, rotation, scrollRoot, material.id]);
+
+  // Handle pinch-to-zoom (2-finger trackpad / touch gesture) and Ctrl+wheel zooming
+  useEffect(() => {
+    if (!scrollRoot) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) {
+        e.preventDefault();
+
+        const delta = -e.deltaY;
+        const maxDelta = 100;
+        const boundedDelta = Math.max(-maxDelta, Math.min(maxDelta, delta));
+        
+        // Scale factor per event (0.008 is standard and comfortable)
+        const zoomFactor = 1 + boundedDelta * 0.008;
+
+        // Record the mouse cursor coordinate as the zoom anchor
+        const containerRect = scrollRoot.getBoundingClientRect();
+        const mouseX = e.clientX - containerRect.left;
+        const mouseY = e.clientY - containerRect.top;
+        zoomAnchorRef.current = { mouseX, mouseY };
+
+        setZoom(prev => {
+          const next = Math.max(0.4, Math.min(3.0, prev * zoomFactor));
+          return Math.round(next * 100) / 100;
+        });
+      }
+    };
+
+    scrollRoot.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      scrollRoot.removeEventListener('wheel', handleWheel);
+    };
+  }, [scrollRoot]);
 
   useEffect(() => {
     if (!scrollRoot || numPages === 0) return;
@@ -905,9 +1125,10 @@ export default function CustomPdfViewer({
 
   // ─── MAIN RENDER ─────────────────────────────────────────────────────────
   return (
-    <div className="h-full flex bg-surface-container-lowest overflow-hidden font-sans">
+    <div className="h-full flex bg-surface-container-lowest overflow-hidden font-sans relative">
 
       {/* ─── LEFT SIDEBAR ─────────────────────────────────────────────── */}
+
       {isSidebarOpen && (
         <PdfSidebar
           materialId={material.id}
@@ -933,7 +1154,7 @@ export default function CustomPdfViewer({
       {/* Main workspace container wrapping Reader + Blackboard */}
       <div className="flex-1 flex min-w-0 h-full">
         {/* ─── MAIN READER COLUMN ───────────────────────────────────────── */}
-        <div className={`flex flex-col min-w-0 h-full bg-surface-dim transition-all ${
+        <div className={`flex flex-col min-w-0 h-full bg-surface-dim transition-all relative ${
           isBlackboardOpen
             ? (isBlackboardFullScreen ? 'w-0 opacity-0 overflow-hidden pointer-events-none' : 'flex-[2]')
             : 'flex-1'
@@ -969,6 +1190,46 @@ export default function CustomPdfViewer({
             onSetWorkspaceMode={handleSetWorkspaceMode}
           />
 
+          {/* ── CROP MODE OVERLAY (rendered outside scroll+overflow containers) ── */}
+          {cropModeActive && (
+            <div
+              className="absolute inset-0 cursor-crosshair z-[200] select-none"
+              style={{ background: 'rgba(0,0,0,0.35)' }}
+              onMouseDown={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                setCropStart({ x, y });
+                setCropEnd({ x, y });
+              }}
+              onMouseMove={(e) => {
+                if (!cropStart) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                setCropEnd({ x, y });
+              }}
+              onMouseUp={handleCropMouseUp}
+            >
+              {cropStart && cropEnd && (
+                <div
+                  className="absolute border-2 border-dashed border-white/90 bg-white/10"
+                  style={{
+                    left: `${Math.min(cropStart.x, cropEnd.x)}px`,
+                    top: `${Math.min(cropStart.y, cropEnd.y)}px`,
+                    width: `${Math.abs(cropStart.x - cropEnd.x)}px`,
+                    height: `${Math.abs(cropStart.y - cropEnd.y)}px`,
+                    boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)',
+                  }}
+                />
+              )}
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 text-white text-xs font-semibold rounded-full px-4 py-2 flex items-center gap-2 pointer-events-none">
+                <span className="w-2 h-2 bg-red-400 rounded-full animate-ping inline-block" />
+                Drag to crop — <strong>Esc</strong> to cancel
+              </div>
+            </div>
+          )}
+
           {/* ── SCROLL READER ── */}
           <div
             ref={scrollContainerRef}
@@ -996,6 +1257,7 @@ export default function CustomPdfViewer({
                 setActiveSelectionPage={setActiveSelectionPage}
                 scrollContainerEl={scrollRoot}
                 highlightReloadTrigger={highlightReloadTrigger}
+                onAddNoteFromSelection={onAddNoteFromSelection}
               />
             ))}
           </div>
@@ -1047,7 +1309,7 @@ export default function CustomPdfViewer({
       />
     </div>
   );
-}
+});
 
 
 
@@ -1073,6 +1335,7 @@ interface PdfPageItemProps {
   /** Pass down the scroll container so selection drag can auto-scroll */
   scrollContainerEl: HTMLDivElement | null;
   highlightReloadTrigger?: number;
+  onAddNoteFromSelection?: (text: string) => void;
 }
 
 function PdfPageItem({
@@ -1095,6 +1358,7 @@ function PdfPageItem({
   setActiveSelectionPage,
   scrollContainerEl,
   highlightReloadTrigger,
+  onAddNoteFromSelection,
 }: PdfPageItemProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const pdfCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -1107,13 +1371,20 @@ function PdfPageItem({
   const [dimensions, setDimensions] = useState({ w: Math.round(595 * zoom), h: Math.round(842 * zoom) });
   const [hoveredAiHighlight, setHoveredAiHighlight] = useState<{ x: number; y: number } | null>(null);
 
-  // Sync default dimensions when zoom or rotation changes to prevent layout shifts
-  useEffect(() => {
-    const isRotated = rotation % 180 !== 0;
-    const baseW = isRotated ? 842 : 595;
-    const baseH = isRotated ? 595 : 842;
-    setDimensions({ w: Math.round(baseW * zoom), h: Math.round(baseH * zoom) });
-  }, [zoom, rotation]);
+  // Synchronously update dimensions when zoom or rotation props change to prevent layout shifts and clamping during parent scroll adjustment
+  const [prevZoom, setPrevZoom] = useState(zoom);
+  const [prevRotation, setPrevRotation] = useState(rotation);
+
+  if (zoom !== prevZoom || rotation !== prevRotation) {
+    const scale = zoom / prevZoom;
+    const isRotatedChanged = rotation !== prevRotation;
+    const newW = isRotatedChanged ? dimensions.h : Math.round(dimensions.w * scale);
+    const newH = isRotatedChanged ? dimensions.w : Math.round(dimensions.h * scale);
+    
+    setPrevZoom(zoom);
+    setPrevRotation(rotation);
+    setDimensions({ w: newW, h: newH });
+  }
 
   const [isIntersecting, setIsIntersecting] = useState(false);
 
@@ -1158,6 +1429,7 @@ function PdfPageItem({
     addTextMark,
     deleteHighlight,
     copySelectedText,
+    clearSelection,
     handlePageMouseDown,
     handlePageDoubleClick,
   } = usePdfSelection({
@@ -1433,6 +1705,20 @@ function PdfPageItem({
             const pdfjsLib = (window as any).pdfjsLib;
             const textContent = await page.getTextContent();
             const textViewport = page.getViewport({ scale: zoom, rotation });
+
+            if ((!textContent?.items || textContent.items.length === 0) && canvas) {
+              const ocrItems = await getOrGenerateOcrTextItems(
+                materialId,
+                pageNum,
+                canvas,
+                textViewport.width,
+                textViewport.height
+              );
+              if (ocrItems && ocrItems.length > 0) {
+                processedTextItemsRef.current = ocrItems;
+              }
+            }
+
             await renderSelectableTextLayer(pdfjsLib, textLayer, textContent, textViewport, processedTextItemsRef);
           }
 
@@ -1826,8 +2112,12 @@ function PdfPageItem({
               addTextHighlight={addTextHighlight}
               addTextMark={addTextMark}
               copySelectedText={copySelectedText}
+              clearSelection={clearSelection}
+              onAddNoteFromSelection={onAddNoteFromSelection}
             />
           )}
+
+
         </>
       ) : null}
 
@@ -1920,50 +2210,48 @@ function renderManualSelectableTextLayer(
   const measureCtx = measureCanvas.getContext('2d');
 
   // 1. Process items to compute coordinates and visual baseline positions
-  const processedItems = items
-    .map(item => {
-      if (!item?.str) return null;
+  let processedItems: any[] = [];
 
-      const transform = util?.transform
-        ? util.transform(viewport.transform, item.transform)
-        : multiplyTransforms(viewport.transform, item.transform);
+  if (items.length > 0) {
+    processedItems = items
+      .map(item => {
+        if (!item?.str) return null;
 
-      const fontHeight = Math.hypot(transform[2], transform[3]) || Math.abs(transform[3]) || 10;
-      const angle = Math.atan2(transform[1], transform[0]);
-      const left = transform[4];
+        const transform = util?.transform
+          ? util.transform(viewport.transform, item.transform)
+          : multiplyTransforms(viewport.transform, item.transform);
 
-      // Selection rects use the full glyph box: from ascender top to descender bottom.
-      // transform[5] is the baseline in screen-Y-down coordinates.
-      // The visual top of the glyph (ascender line) is approximately baseline - fontHeight.
-      // Using the full fontHeight gives a rect that tightly encloses the glyph,
-      // matching Chrome and Adobe's highlight behaviour.
-      const top = transform[5] - fontHeight;
+        const fontHeight = Math.hypot(transform[2], transform[3]) || Math.abs(transform[3]) || 10;
+        const angle = Math.atan2(transform[1], transform[0]);
+        const left = transform[4];
+        const top = transform[5] - fontHeight;
+        const visualTop = transform[5] - fontHeight * 0.82;
+        const width = Math.max(8, (item.width || item.str.length * fontHeight * 0.55) * viewport.scale);
 
-      // For span CSS positioning we use a slightly tighter offset so the visible
-      // (transparent) span aligns with the rendered glyph for cursor / hit purposes.
-      // 0.82 is the standard PDF ascender ratio; adjust if a PDF uses unusual fonts.
-      const visualTop = transform[5] - fontHeight * 0.82;
+        const fontName = item.fontName;
+        const style = textContent?.styles?.[fontName];
+        const fontFamily = style?.fontFamily || 'sans-serif';
 
-      const width = Math.max(8, (item.width || item.str.length * fontHeight * 0.55) * viewport.scale);
-
-      // Extract precise fontFamily from PDF styles metadata mapping
-      const fontName = item.fontName;
-      const style = textContent.styles?.[fontName];
-      const fontFamily = style?.fontFamily || 'sans-serif';
-
-      return {
-        item,
-        transform,
-        fontHeight,
-        angle,
-        left,
-        top,
-        visualTop,
-        width,
-        fontFamily,
-      };
-    })
-    .filter(Boolean) as any[];
+        return {
+          item,
+          transform,
+          fontHeight,
+          angle,
+          left,
+          top,
+          visualTop,
+          width,
+          fontFamily,
+        };
+      })
+      .filter(Boolean) as any[];
+  } else if (processedTextItemsRef.current && processedTextItemsRef.current.length > 0) {
+    processedItems = processedTextItemsRef.current.map(p => ({
+      ...p,
+      visualTop: p.top,
+      fontFamily: p.fontFamily || 'sans-serif'
+    }));
+  }
 
   // ── PHASE 1: Compute row buckets ────────────────────────────────────────────
   // Determine median font height so we can bucket items into visual rows.
@@ -2061,3 +2349,5 @@ function multiplyTransforms(a: number[], b: number[]) {
     a[1] * b[4] + a[3] * b[5] + a[5],
   ];
 }
+
+export default CustomPdfViewer;

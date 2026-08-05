@@ -19,6 +19,9 @@ const SettingsView   = lazy(() => import('../tabs/SettingsView'));
 const CustomizeView  = lazy(() => import('../tabs/CustomizeView'));
 const DocumentViewer = lazy(() => import('../tabs/DocumentViewer'));
 const NoteEditor     = lazy(() => import('../tabs/NoteEditor'));
+const CourseExplorer  = lazy(() => import('../tabs/CourseExplorer'));
+const CourseWorkspace = lazy(() => import('../tabs/CourseWorkspace'));
+const NotesWorkspace = lazy(() => import('../tabs/NotesWorkspace'));
 
 /** Minimal fallback shown while a lazy tab chunk loads (first open only) */
 function TabSkeleton() {
@@ -39,6 +42,53 @@ export default function AppShell() {
 
   // Register keyboard shortcuts globally inside workspace shell
   useKeyboardShortcuts();
+
+  // Listen for download started/completed events and show toasts
+  useEffect(() => {
+    if (!window.electronAPI) return;
+
+    const unsubStart = window.electronAPI.on('download:started', (data: { filename: string }) => {
+      window.dispatchEvent(new CustomEvent('corvovault:show-toast', {
+        detail: { message: `📥 Downloading "${data.filename}" in background...` }
+      }));
+    });
+
+    const unsubCompleted = window.electronAPI.on('download:completed', (data: { filename: string; success: boolean; error?: string }) => {
+      if (data.success) {
+        window.dispatchEvent(new CustomEvent('corvovault:show-toast', {
+          detail: { message: `✓ "${data.filename}" saved to Vault!` }
+        }));
+      } else {
+        window.dispatchEvent(new CustomEvent('corvovault:show-toast', {
+          detail: { message: `❌ Failed to download "${data.filename}": ${data.error || 'Unknown error'}` }
+        }));
+      }
+    });
+
+    return () => {
+      if (unsubStart) unsubStart();
+      if (unsubCompleted) unsubCompleted();
+    };
+  }, []);
+
+  // Listen for global tab switch requests
+  useEffect(() => {
+    const handleSwitchTab = (e: Event) => {
+      const customEvent = e as CustomEvent<{ tab: any }>;
+      const tabDetail = customEvent.detail?.tab;
+      if (tabDetail) {
+        if (typeof tabDetail === 'object' && tabDetail.type) {
+          openTab(tabDetail.type, tabDetail.title, tabDetail.data);
+        } else if (typeof tabDetail === 'string') {
+          openTab(tabDetail as any);
+        }
+      }
+    };
+    window.addEventListener('corvovault:switch-tab', handleSwitchTab);
+    return () => {
+      window.removeEventListener('corvovault:switch-tab', handleSwitchTab);
+    };
+  }, [openTab]);
 
   // Resolve deep-linking route on mount
   // Production Electron loads file://.../dist/index.html where the pathname may not match
@@ -90,16 +140,19 @@ export default function AppShell() {
     if (opener) opener();
   }, [openTab]);
 
-  const renderTabContent = useCallback((tab: Tab) => {
+  const renderTabContent = useCallback((tab: Tab, isActive: boolean) => {
     switch (tab.type) {
       case 'today':    return <TodayView />;
-      case 'vault':    return <VaultView isActive={true} />;
+      case 'vault':    return <VaultView isActive={isActive} />;
       case 'clip':     return <ClipView />;
-      case 'browser':  return <BrowserView isActive={true} />;
+      case 'browser':  return <BrowserView isActive={isActive} />;
       case 'settings': return <SettingsView />;
       case 'customize':return <CustomizeView />;
-      case 'document': return <DocumentViewer data={tab.data} isActive={true} />;
-      case 'note':     return <NoteEditor data={tab.data} isActive={true} />;
+      case 'document': return <DocumentViewer data={tab.data} isActive={isActive} />;
+      case 'note':     return <NoteEditor data={tab.data} isActive={isActive} />;
+      case 'course-explorer': return <CourseExplorer />;
+      case 'course-workspace': return <CourseWorkspace data={tab.data} isActive={isActive} />;
+      case 'notes-workspace': return <NotesWorkspace isActive={isActive} />;
       default:         return <TodayView />;
     }
   }, []);
@@ -135,7 +188,7 @@ export default function AppShell() {
                     }`}
                   >
                     <Suspense fallback={<TabSkeleton />}>
-                      {renderTabContent(tab)}
+                      {renderTabContent(tab, isActive)}
                     </Suspense>
                   </div>
                 );

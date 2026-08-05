@@ -150,7 +150,7 @@ export function registerVaultHandlers(db: Database.Database, serviceHost: Servic
 
   ipcMain.handle('profiles:syncAll', async (_, profiles) => serviceHost.vault.syncProfiles(profiles || []));
 
-  ipcMain.handle('vault:getMaterials', async (_, folderId, profileId) => serviceHost.vault.getMaterials(folderId, profileId));
+  ipcMain.handle('vault:getMaterials', async (_, folderId, profileId, limit?: number, offset?: number) => serviceHost.vault.getMaterials(folderId, profileId, limit, offset));
   ipcMain.handle('vault:getAllMaterials', async (_, profileId) => serviceHost.vault.getAllMaterials(profileId));
   // Lightweight count query — returns {files, links, youtubes, notes, total} without loading all rows.
   ipcMain.handle('vault:getMaterialCounts', async (_, profileId) => serviceHost.vault.getMaterialCounts(profileId));
@@ -195,6 +195,14 @@ export function registerVaultHandlers(db: Database.Database, serviceHost: Servic
     }
 
     return material;
+  });
+
+  ipcMain.handle('vault:updateMaterial', async (event, id: string, updates: any) => {
+    await serviceHost.vault.updateMaterial(id, updates);
+    if (event.sender) {
+      event.sender.send('material:updated', { id, updates });
+    }
+    return { success: true };
   });
 
   // Keep the file vault and SQLite state in lockstep.

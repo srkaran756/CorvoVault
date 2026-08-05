@@ -54,6 +54,14 @@ function createRichTestDb(): Database.Database {
       chapter_id    TEXT,
       raw_text      TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS concept_relationships (
+      material_id TEXT NOT NULL,
+      parent_concept TEXT NOT NULL,
+      child_concept TEXT NOT NULL,
+      relationship_type TEXT NOT NULL DEFAULT 'prerequisite',
+      PRIMARY KEY (material_id, parent_concept, child_concept)
+    );
   `);
   return db;
 }

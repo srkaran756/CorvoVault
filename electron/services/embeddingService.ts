@@ -8,6 +8,8 @@ env.cacheDir = path.join(userDataPath, 'ai-models');
 // Force CPU execution — no GPU requirement, works on all student devices
 env.backends.onnx.wasm.numThreads = Math.max(1, Math.min(4, require('os').cpus().length - 1));
 
+import { isRAGEnabled } from '../config/featureFlags';
+
 type FeatureExtractionPipeline = Awaited<ReturnType<typeof pipeline>>;
 
 export class EmbeddingService {
@@ -36,43 +38,29 @@ export class EmbeddingService {
     return EmbeddingService.pipelinePromise;
   }
 
-  // Main entry point: embed a list of text strings
-  // Returns an array of Float32Array, one per input string
-  async embedBatch(texts: string[]): Promise<Float32Array[]> {
-    const pipe = await this.getOrInitPipeline();
-    const results: Float32Array[] = [];
-
-    for (let i = 0; i < texts.length; i += this.batchSize) {
-      const batch = texts.slice(i, i + this.batchSize);
-      const batchStart = Date.now();
-
-      const output = await (pipe as any)(batch, {
-        pooling: 'mean',
-        normalize: true,
-      });
-
-      const batchMs = Date.now() - batchStart;
-
-      // Adapt batch size based on measured throughput
-      if (batchMs > this.TARGET_BATCH_MS && this.batchSize > this.MIN_BATCH_SIZE) {
-        this.batchSize = Math.max(this.MIN_BATCH_SIZE, Math.floor(this.batchSize / 2));
-        console.log(`[EmbeddingService] Slow batch (${batchMs}ms), reducing to batchSize=${this.batchSize}`);
-      } else if (batchMs < this.TARGET_BATCH_MS * 0.5 && this.batchSize < this.MAX_BATCH_SIZE) {
-        this.batchSize = Math.min(this.MAX_BATCH_SIZE, this.batchSize * 2);
-        console.log(`[EmbeddingService] Fast batch (${batchMs}ms), increasing to batchSize=${this.batchSize}`);
-      }
-
-      // Extract Float32Arrays from the model output tensor
-      for (let j = 0; j < batch.length; j++) {
-        const embedding = output[j]?.data ?? output.data?.slice(j * 384, (j + 1) * 384);
-        results.push(new Float32Array(embedding));
-      }
-
-      // Yield to event loop between batches — keeps app responsive on weak hardware
-      await new Promise<void>(resolve => setImmediate(resolve));
+  async embedBatch(texts: string[], onProgress?: (progress: number) => void): Promise<Float32Array[]> {
+    if (!isRAGEnabled()) {
+      console.log('[EmbeddingService] RAG pipeline is disabled via feature flags. Skipping embedding generation.');
+      return [];
     }
-
-    return results;
+    const extractor = await this.getOrInitPipeline();
+    const embeddings: Float32Array[] = [];
+    const batchSize = this.batchSize;
+    
+    for (let i = 0; i < texts.length; i += batchSize) {
+      const batch = texts.slice(i, i + batchSize);
+      const output: any = await (extractor as any)(batch, { pooling: 'mean', normalize: true });
+      const dim = output.dims[1];
+      for (let j = 0; j < batch.length; j++) {
+        const start = j * dim;
+        const end = start + dim;
+        embeddings.push(new Float32Array(output.data.subarray(start, end)));
+      }
+      if (onProgress) {
+        onProgress(Math.round((embeddings.length / texts.length) * 100));
+      }
+    }
+    return embeddings;
   }
 
   // Cosine similarity between two L2-normalized embeddings (dot product shortcut)

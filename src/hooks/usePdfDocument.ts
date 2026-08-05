@@ -106,8 +106,9 @@ export function usePdfDocument(activePdfPath: string, getFileSrc: (path: string 
       try {
         let doc: any;
 
-        // Electron: read file as base64 bytes (avoids CSP issues)
-        if ((window as any).electronAPI && !/^(https?:|blob:)/i.test(activePdfPath)) {
+        // Electron: read file as base64 bytes (avoids CORS/CSP issues)
+        if ((window as any).electronAPI && !/^(blob:)/i.test(activePdfPath)) {
+          const isRemoteUrl = /^(https?:)/i.test(activePdfPath);
           try {
             const exists = await (window as any).electronAPI.fileExists(activePdfPath);
             if (exists) {
@@ -118,14 +119,23 @@ export function usePdfDocument(activePdfPath: string, getFileSrc: (path: string 
                 const bytes = new Uint8Array(binary.length);
                 for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
                 doc = await pdfjsLib.getDocument({ data: bytes }).promise;
+              } else if (isRemoteUrl) {
+                // Remote fetch failed (auth wall, network error, etc.) — do NOT
+                // fall through to a renderer-side fetch which will hit CORS.
+                throw new Error(
+                  'Unable to load this PDF directly. The file may require authentication or be behind a login wall. ' +
+                  'Please download it first using the Download button.'
+                );
               }
             }
-          } catch (e) {
+          } catch (e: any) {
+            // If we explicitly threw for remote URLs, propagate it
+            if (isRemoteUrl && e.message?.includes('Unable to load')) throw e;
             console.warn('Base64 read failed, falling back to URL', e);
           }
         }
 
-        // Fallback: URL fetch (works for corvovault-file:// protocol too)
+        // Fallback: URL fetch (works for corvovault-file:// protocol)
         if (!doc) {
           doc = await pdfjsLib.getDocument({ url: fileUrl }).promise;
         }

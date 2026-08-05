@@ -67,7 +67,7 @@ Even if you have **never coded before**, you can edit these files using a simple
 
 ### Step 1: Changing the Default Launch Theme
 When a user opens CorvoVault for the first time, it loads the default theme.
-* **File to open:** [src/lib/theme.ts](file:///f:/SIC%20v4/study-in-center/src/lib/theme.ts)
+* **File to open:** [src/lib/theme.ts](file:///f:/SIC%20v4/CorvoVault/src/lib/theme.ts)
 * **What to look for:** Find the `DEFAULT_THEME` object at the very top of the file:
 ```typescript
 export const DEFAULT_THEME: Record<string, string> = {
@@ -91,7 +91,7 @@ export const DEFAULT_THEME: Record<string, string> = {
 
 ### Step 2: Changing the Fallback Global Styles
 In case the JavaScript engine hasn't loaded yet, the browser uses the fallback CSS.
-* **File to open:** [src/index.css](file:///f:/SIC%20v4/study-in-center/src/index.css)
+* **File to open:** [src/index.css](file:///f:/SIC%20v4/CorvoVault/src/index.css)
 * **What to look for:** Look for the `:root` block:
 ```css
 :root {
@@ -115,7 +115,7 @@ In case the JavaScript engine hasn't loaded yet, the browser uses the fallback C
 
 ### Step 3: Changing the Preset Themes (Mango, Lichi, Coffee, etc.)
 The app provides a "Customize Space" tab where users can choose prebuilt vibes. Some of these are currently popping/harsh and need refinement.
-* **File to open:** [src/components/tabs/CustomizeView.tsx](file:///f:/SIC%20v4/study-in-center/src/components/tabs/CustomizeView.tsx)
+* **File to open:** [src/components/tabs/CustomizeView.tsx](file:///f:/SIC%20v4/CorvoVault/src/components/tabs/CustomizeView.tsx)
 * **What to look for:** Scroll to the `PREBUILT_PALETTES` array:
 ```typescript
 const PREBUILT_PALETTES = [
@@ -127,7 +127,7 @@ const PREBUILT_PALETTES = [
 ```
 * **How to edit:**
   1. Each palette uses a **Base Hue** (0 to 360) and a **Style Vibe** (`'light' | 'dark' | 'warm' | 'cool' | 'bold' | 'crow' | 'night'`).
-  2. The actual generation formulas (like how the colors are derived from the Base Hue) are located in [src/lib/themeGenerator.ts](file:///f:/SIC%20v4/study-in-center/src/lib/themeGenerator.ts).
+  2. The actual generation formulas (like how the colors are derived from the Base Hue) are located in [src/lib/themeGenerator.ts](file:///f:/SIC%20v4/CorvoVault/src/lib/themeGenerator.ts).
   3. For custom static presets (like `Crow` and `Night`), you can pass direct hex codes as an array:
      ```typescript
      { name: 'Crow', emoji: '🐦‍⬛', hue: 270, style: 'crow' as ThemeStyle, colors: ['#4F46E5', '#0F1115', '#FCD34D'] }

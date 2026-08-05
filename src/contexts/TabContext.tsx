@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { useAuth } from './AuthContext';
 
 
-export type TabType = 'today' | 'vault' | 'clip' | 'browser' | 'settings' | 'customize' | 'document' | 'note';
+export type TabType = 'today' | 'vault' | 'clip' | 'browser' | 'settings' | 'customize' | 'document' | 'note' | 'course-explorer' | 'course-workspace' | 'notes-workspace';
 
 export interface Tab {
   id: string;
@@ -184,7 +184,7 @@ export const TabProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const openTab = useCallback((type: TabType, title?: string, data?: any) => {
     // 1. Handle singleton tabs (Today, Vault, Settings, browser, etc.)
-    if (['today', 'vault', 'clip', 'browser', 'settings', 'customize'].includes(type)) {
+    if (['today', 'vault', 'clip', 'browser', 'settings', 'customize', 'course-explorer', 'notes-workspace'].includes(type)) {
       setTabs(prev => {
         const existingIndex = prev.findIndex(t => t.type === type);
         if (existingIndex !== -1) {
@@ -196,7 +196,11 @@ export const TabProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const newTab: Tab = {
           id: type,
           type,
-          title: title || type.charAt(0).toUpperCase() + type.slice(1)
+          title: title || (
+            type === 'course-explorer' ? 'Course Explorer' :
+            type === 'notes-workspace' ? 'Notes' :
+            type.charAt(0).toUpperCase() + type.slice(1)
+          )
         };
         setTimeout(() => setActiveTabId(newTab.id), 0);
         return [...prev, newTab];
@@ -204,8 +208,8 @@ export const TabProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
-    // 2. Handle dynamic dynamic tabs (document, note)
-    if (['document', 'note'].includes(type)) {
+    // 2. Handle dynamic dynamic tabs (document, note, course-workspace)
+    if (['document', 'note', 'course-workspace'].includes(type)) {
       const targetId = data?.id ? `${type}-${data.id}` : `${type}-${Date.now()}`;
       setTabs(prev => {
         const existingIndex = prev.findIndex(t => t.type === type && t.data?.id === data?.id);
@@ -218,7 +222,7 @@ export const TabProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const newTab: Tab = {
           id: targetId,
           type,
-          title: title || (type === 'note' ? 'Note' : 'Document'),
+          title: title || (type === 'note' ? 'Note' : type === 'course-workspace' ? 'Course Workspace' : 'Document'),
           data
         };
         setTimeout(() => setActiveTabId(newTab.id), 0);

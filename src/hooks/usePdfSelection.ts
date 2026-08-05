@@ -697,6 +697,11 @@ export function usePdfSelection({
     onSelectionActiveChange?.(!!selectionToolbar);
   }, [selectionToolbar, onSelectionActiveChange]);
 
+  const clearSelection = useCallback(() => {
+    setCustomSelection(null);
+    setSelectionToolbar(null);
+  }, []);
+
   return {
     customSelection,
     setCustomSelection,
@@ -708,6 +713,7 @@ export function usePdfSelection({
     addTextMark,
     deleteHighlight,
     copySelectedText,
+    clearSelection,
     handlePageMouseDown,
     handlePageDoubleClick,
   };
