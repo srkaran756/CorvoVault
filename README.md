@@ -8,11 +8,10 @@ CorvoVault is a local-first desktop application built to support the journey of 
 ## Screenshots
 
 ### Vault 
-![CorvoVault Vault ](docs/screenshots/vault.png)
+we are updating the screenshots section on this repository.
 
 ### PDF Reader & AI Assistant
-![CorvoVault PDF Reader Cover](docs/screenshots/pdf_reader_cover.png)
-![CorvoVault PDF Reader Highlight](docs/screenshots/pdf_reader_highlight.png)
+we are updating the screenshots section on this repository.
 
 ## What it does
 
