@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to **CorvoVault**! We welcome open-source contributions from developers, designers, and curious minds.
 
-This document provides setup instructions, architectural principles, coding standards, and step-by-step guidance for submitting pull requests.
+This document provides setup instructions, architectural principles, coding standards, branching model guidelines, and step-by-step guidance for submitting pull requests.
 
 ---
 
@@ -11,7 +11,7 @@ This document provides setup instructions, architectural principles, coding stan
 CorvoVault is a local-first desktop application designed to support the journey of learning by bringing PDFs, websites, YouTube videos, Markdown notes, courses, and AI conversations into a single connected workspace.
 
 ### Key Technical Characteristics
-- **Local-First**: User data lives on their local machine in SQLite (`userData/corvovault.db`) and `userData/local-files/`.
+- **Local-First**: User data lives on the local machine in SQLite (`userData/corvovault.db`) and `userData/local-files/`.
 - **Decoupled Architecture**: 
   - **Main Process** (`electron/`): Node.js environment managing window lifecycles, SQLite database operations, native file access, local embedding inference, and Deep Ignoto privacy proxy.
   - **Renderer Process** (`src/`): React 19 UI styled with Tailwind CSS 4, tab management, custom PDF viewer canvas, and markdown rendering.
@@ -22,7 +22,7 @@ CorvoVault is a local-first desktop application designed to support the journey 
 ## 2. Setting Up Your Development Environment
 
 ### Prerequisites
-- **Node.js**: v18.0.0 or higher
+- **Node.js**: v18.0.0 or higher (v20+ recommended)
 - **npm**: v9.0.0 or higher
 - **Operating System**: Windows 10/11 (or Linux/macOS for development; Windows required for Pandoc executable packaging)
 - **Bundled Binaries**: `pandoc.exe` in `resources/pandoc/` (for DOCX previews)
@@ -31,16 +31,16 @@ CorvoVault is a local-first desktop application designed to support the journey 
 
 1. **Clone the repository and switch to the development branch**:
    ```bash
-   git clone https://github.com/your-org/CorvoVault.git
+   git clone https://github.com/srkaran756/CorvoVault.git
    cd CorvoVault
    git checkout CorvoVault-v2-development-phase
    ```
 
 2. **Install Node dependencies**:
    ```bash
-   npm install
+   npm ci
    ```
-   *Note: The postinstall hook automatically rebuilds native C/C++ modules (`better-sqlite3`, `keytar`) against your installed Electron version.*
+   *Note: The postinstall hook automatically rebuilds native C/C++ modules (`better-sqlite3`, `keytar`, `sqlite-vec`) against your installed Electron version.*
 
 3. **If native module compilation fails**:
    ```bash
@@ -53,9 +53,12 @@ CorvoVault is a local-first desktop application designed to support the journey 
    ```
    This launches both the Vite development server (at `http://127.0.0.1:3000`) and Electron concurrently with live reloading.
 
-5. **Run Unit Tests**:
+5. **Run Local Verification Checks**:
    ```bash
-   npm test
+   npm run typecheck            # Check UI TypeScript types
+   npm run typecheck:electron   # Check Electron Main process TypeScript types
+   npm test                     # Run Vitest test suite
+   npm run build                # Verify Vite frontend build
    ```
 
 ---
@@ -90,32 +93,83 @@ To maintain high code quality across the codebase, please follow these structura
 
 ---
 
-## 4. How to Submit a Pull Request (PR)
+## 4. Branching Model & Git Strategy
 
-1. **Create a Feature Branch**:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-2. **Make your changes** following the code formatting and architectural guidelines.
-3. **Verify tests and build**:
-   ```bash
-   npm test
-   npm run electron:build
-   ```
-4. **Commit your changes**:
-   ```bash
-   git commit -m "feat(browser): add tab reload spinner indicator"
-   ```
-5. **Push and create a PR**:
-   - Target branch: `CorvoVault-v2-development-phase` (or `main` for release stability).
-   - Ensure your PR description clearly describes the problem solved, changes made, and visual screenshots/video if UI components were modified.
+CorvoVault uses a structured branching model to maintain stability while enabling rapid feature development:
+
+```text
+main (Production & Tagged Releases)
+└── CorvoVault-v2-development-phase (Primary Integration Branch)
+      ├── feature/<short-description>   (New user-facing features)
+      ├── fix/<short-description>       (Bug fixes & patches)
+      ├── refactor/<short-description>  (Internal architectural cleanup)
+      └── chore/<short-description>     (Maintenance & infrastructure updates)
+```
+
+### Branch Definitions & Purpose
+- **`main`**: Contains production-ready, stable releases. Code is merged into `main` exclusively from `CorvoVault-v2-development-phase` upon release cut.
+- **`CorvoVault-v2-development-phase`**: Primary integration branch for active development. All feature branches, bug fixes, and chores should target this branch.
+- **Working Branches**:
+  - `feature/pdf-search-highlight`: For new user-facing features.
+  - `fix/webview-adblock-crash`: For resolving reported bugs.
+  - `refactor/ipc-schema-validation`: For internal code improvements without functionality changes.
+  - `chore/ci-workflow-setup`: For maintenance, dependency updates, or documentation updates.
+
+### Conventional Commit Standard
+Commit messages must follow the [Conventional Commits](https://www.conventionalcommits.org/) format:
+
+```text
+<type>(<scope>): <short description>
+```
+
+**Types**:
+- `feat`: A new user-facing feature.
+- `fix`: A bug fix.
+- `docs`: Documentation changes only.
+- `style`: Formatting, missing semi-colons, no code logic changes.
+- `refactor`: Code change that neither fixes a bug nor adds a feature.
+- `test`: Adding missing tests or correcting existing tests.
+- `chore`: Infrastructure updates, package scripts, or dependency maintenance.
+
+**Examples**:
+- `feat(browser): add tab reload spinner indicator`
+- `fix(db): resolve migration lock error on startup`
+- `chore(ci): add GitHub Actions workflow for type checking`
 
 ---
 
-## 5. Contact & Documentation Links
+## 5. How to Submit a Pull Request (PR)
+
+1. **Create a Working Branch** from `CorvoVault-v2-development-phase`:
+   ```bash
+   git checkout CorvoVault-v2-development-phase
+   git pull origin CorvoVault-v2-development-phase
+   git checkout -b feature/your-feature-name
+   ```
+2. **Make your changes** adhering to architectural guidelines and code style.
+3. **Run local verification**:
+   ```bash
+   npm run typecheck
+   npm run typecheck:electron
+   npm test
+   npm run build
+   ```
+4. **Commit your changes** using Conventional Commits:
+   ```bash
+   git commit -m "feat(scope): brief description"
+   ```
+5. **Push and open a Pull Request**:
+   - Target branch: `CorvoVault-v2-development-phase`
+   - Fill out `.github/PULL_REQUEST_TEMPLATE.md` completely.
+   - Verify that all CI checks pass.
+
+---
+
+## 6. Contact & Documentation Links
 
 - **Engineering Architecture Specification**: [`ENGINEERING.md`](ENGINEERING.md)
 - **Project Vision & Philosophy**: [`PROJECT_VISION.md`](PROJECT_VISION.md)
+- **Security Policy**: [`SECURITY.md`](SECURITY.md)
 - **In-App Browser & Adblocker Architecture**: [`docs/IN_APP_BROWSER_GUIDE.md`](docs/IN_APP_BROWSER_GUIDE.md)
 - **AI Subsystem Architecture**: [`docs/AI_SYSTEM.md`](docs/AI_SYSTEM.md)
 - **Theme & Design System Guide**: [`docs/THEME_DESIGN_GUIDE.md`](docs/THEME_DESIGN_GUIDE.md)
