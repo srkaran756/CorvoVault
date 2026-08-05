@@ -35,9 +35,23 @@ Learning is not linear—it spans across PDFs, research papers, online courses, 
 
 ---
 
-> <sub>*Updated screenshots and UI walkthroughs for the latest release will be uploaded here soon.*</sub>
+## 📸 Interface Showcase
 
----
+<div align="center">
+
+| **Knowledge Vault & Resource Hierarchy** | **Standalone Notes Studio (Markdown & KaTeX)** |
+|:---:|:---:|
+| <img src="docs/screenshots/vault.png" alt="Knowledge Vault" width="100%" /> | <img src="docs/screenshots/notes.png" alt="Notes Studio" width="100%" /> |
+| *Unified Topic → Folder → Material organization for PDFs, web links, and YouTube lectures.* | *Split-view live Markdown editor with KaTeX math equations and callout blocks.* |
+
+<br />
+
+| **Online Course Explorer** | **Profiles & Customization Settings** |
+|:---:|:---:|
+| <img src="docs/screenshots/course_explorer.png" alt="Course Explorer" width="100%" /> | <img src="docs/screenshots/settings.png" alt="Settings & Profiles" width="100%" /> |
+| *Browse open course platforms, extract syllabi, and attach study materials.* | *Configure profile preferences, local backup targets, and cloud sync providers.* |
+
+</div>
 
 ## ✨ Key Features
 
