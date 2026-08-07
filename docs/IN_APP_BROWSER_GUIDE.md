@@ -1,4 +1,7 @@
-# CorvoVault: In-App Browser Developer Guide & Architecture
+﻿# CorvoVault: In-App Browser Developer Guide & Architecture
+
+> **Implementation status:** The browser is experimental. It currently uses Electron <webview> elements, keeps hidden tabs alive, and has known memory and lifecycle limitations.
+
 
 This guide explains how CorvoVault handles the in-app Web Browser. It is designed to act as both an architectural audit and an educational document. Whether you are a beginner looking to understand Electron's process model or a maintainer searching for solutions to common integration challenges, this document is for you.
 
@@ -6,7 +9,7 @@ This guide explains how CorvoVault handles the in-app Web Browser. It is designe
 
 ## 1. How Electron Works Under the Hood (For Beginners)
 
-To understand how the in-app browser operates, you first need to understand the structural layout of an **Electron application**. 
+To understand how the in-app browser operates, you first need to understand the structural layout of an **Electron application**.
 
 Unlike standard web applications that run entirely inside a browser sandbox, Electron apps are desktop applications built with web technologies (HTML, CSS, JavaScript). To make this possible, Electron merges two runtimes:
 1. **Chromium**: The engine that renders web pages (same as Google Chrome).
@@ -40,9 +43,9 @@ graph TD
 
 ## 2. What is a `<webview>`?
 
-A webview is a custom HTML tag (`<webview>`) provided by Electron that lets you embed guest content (like external websites) inside your application. 
+A webview is a custom HTML tag (`<webview>`) provided by Electron that lets you embed guest content (like external websites) inside your application.
 
-Think of it as a super-powered `<iframe>`. While an `iframe` runs inside the same renderer process as your React application (making it subject to strict Cross-Origin constraints and able to crash your main UI), a `<webview>` runs in an entirely separate **guest renderer process**. 
+Think of it as a super-powered `<iframe>`. While an `iframe` runs inside the same renderer process as your React application (making it subject to strict Cross-Origin constraints and able to crash your main UI), a `<webview>` runs in an entirely separate **guest renderer process**.
 
 This isolation provides two critical benefits:
 - **Security**: The external site cannot access your app's memory, SQLite database, or electron APIs.
@@ -56,7 +59,7 @@ The in-app browser implementation in CorvoVault is divided into a React frontend
 
 ### The React Component
 
-The UI for managing tabs, history, and search inputs is located in [Browser.tsx](file:///f:/SIC%20v4/CorvoVault/src/components/Browser.tsx).
+The UI for managing tabs, history, and search inputs is located in [Browser.tsx](../src/components/Browser.tsx).
 
 - **Tab State**: Managed using a standard React array of `Tab` objects (containing IDs, titles, URLs, and loading flags).
 - **History & Domain Mode Persistence**: Browser navigation is automatically logged to the `browser_history` SQLite table (migration 014), and domain render mode preferences are cached in `domain_render_cache` (migration 015).
@@ -72,12 +75,12 @@ The UI for managing tabs, history, and search inputs is located in [Browser.tsx]
 ### Preload & Main IPC Handlers
 
 For browser-wide actions that require Node.js-level capability, the renderer talks to the main process:
-1. In [preload.ts](file:///f:/SIC%20v4/CorvoVault/electron/preload.ts), the browser utilities are exposed:
+1. In [preload.ts](../electron/preload.ts), the browser utilities are exposed:
    ```ts
    clearBrowserCache: () => ipcRenderer.invoke('browser:clearCache'),
    openDevTools: () => ipcRenderer.invoke('browser:openDevTools'),
    ```
-2. In [main.ts](file:///f:/SIC%20v4/CorvoVault/electron/main.ts) and [downloadHandler.ts](file:///f:/SIC%20v4/CorvoVault/electron/ipcHandlers/downloadHandler.ts), these calls and download events are handled:
+2. In [main.ts](../electron/main.ts) and [downloadHandler.ts](../electron/ipcHandlers/downloadHandler.ts), these calls and download events are handled:
    - **`browser:clearCache`**: Dynamically accesses the session object for the specific partition and clears cookies, localStorage, and cache databases:
      ```ts
      const browserSession = session.fromPartition('persist:browser');
@@ -85,7 +88,7 @@ For browser-wide actions that require Node.js-level capability, the renderer tal
      await browserSession.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb'] });
      ```
    - **`browser:openDevTools`**: Opens the developer console for inspecting webview content (only enabled in development mode `isDev`).
-   - **Download Interceptor**: Managed via `downloadHandler.ts`, which displays [DownloadPromptModal.tsx](file:///f:/SIC%20v4/CorvoVault/src/components/layout/DownloadPromptModal.tsx) for user confirmation and supports developer inspection via [DevDownloadInspector.tsx](file:///f:/SIC%20v4/CorvoVault/src/components/layout/DevDownloadInspector.tsx).
+   - **Download Interceptor**: Managed via `downloadHandler.ts`, which displays [DownloadPromptModal.tsx](../src/components/layout/DownloadPromptModal.tsx) for user confirmation and supports developer inspection via [DevDownloadInspector.tsx](../src/components/layout/DevDownloadInspector.tsx).
 
 ---
 
@@ -97,7 +100,7 @@ Building an in-app browser reveals several quirks in Electron and Chromium. Here
 By default, Electron background throttles renderers that are out of focus or hidden. When YouTube runs inside a webview, it may pause, freeze, or display a black screen because Electron starves it of CPU cycles. Additionally, modern browsers block audio/video autoplay unless the user interacts with the page.
 
 **Solution**:
-In [Browser.tsx](file:///f:/SIC%20v4/CorvoVault/src/components/Browser.tsx), the `<webview>` specifies customized `webpreferences` and a Desktop User Agent (UA) specifically for YouTube:
+In [Browser.tsx](../src/components/Browser.tsx), the `<webview>` specifies customized `webpreferences` and a Desktop User Agent (UA) specifically for YouTube:
 ```tsx
 webpreferences={(tab.url?.includes('youtube.com')) ? 'autoplayPolicy=no-user-gesture-required, backgroundThrottling=false' : undefined}
 useragent={(tab.url?.includes('youtube.com')) ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' : undefined}
@@ -115,13 +118,13 @@ CorvoVault registers listeners on the webview DOM elements:
 const onNewWindow = (e: any) => {
   const popupUrl = e.url || e.detail?.url;
   if (!popupUrl) return;
-  
+
   // Intercept downloads/files (see Problem 3)
   if (isDocument(popupUrl)) {
     window.electronAPI.openExternal(popupUrl);
     return;
   }
-  
+
   // Open the new URL inside a brand new React browser tab
   createNewTab(popupUrl);
 };
@@ -198,17 +201,17 @@ While the browser is functional, it suffers from several architectural issues th
 > [!WARNING]
 > **Electron `<webview>` Tag Deprecation**
 > The Electron core team has deprecated the `<webview>` tag. It is prone to rendering bugs, suffers from poor performance, and is difficult to secure. Electron now recommends using `BrowserView` or `WebContentsView` (where the main process controls a separate overlay window positioned exactly over the UI).
-> 
+>
 > *Why CorvoVault uses it:* Integrating `BrowserView` requires complex, manual resize-calculations in the Main process matching the React layout coordinates. `<webview>` behaves like a standard HTML element, making it much easier to integrate into React grids and panels.
 
 ### The RAM Leak Problem
-Each `<webview>` in the DOM runs a separate OS-level process. Because CorvoVault hides background tabs using CSS `hidden` rather than unmounting them, **all processes remain active in memory**. 
+Each `<webview>` in the DOM runs a separate OS-level process. Because CorvoVault hides background tabs using CSS `hidden` rather than unmounting them, **all processes remain active in memory**.
 - Open 1 tab: ~150 MB RAM.
 - Open 10 tabs: ~1.5 GB RAM.
 - The webview processes are never garbage-collected or discarded until the tab is explicitly closed.
 
 ### Event Listener Cleanup Complexity
-In [Browser.tsx](file:///f:/SIC%20v4/study-in-center/src/components/Browser.tsx), the React code uses a ref callback to capture the webview DOM node and register listeners. If React re-renders or updates state, these callbacks can run again, potentially accumulating duplicate listeners or failing to clear old ones, leading to memory leaks inside the React DOM tree.
+In [Browser.tsx](../src/components/Browser.tsx), the React code uses a ref callback to capture the webview DOM node and register listeners. If React re-renders or updates state, these callbacks can run again, potentially accumulating duplicate listeners or failing to clear old ones, leading to memory leaks inside the React DOM tree.
 
 ---
 
@@ -219,7 +222,7 @@ If you are a beginner looking to write your first lines of code in CorvoVault, t
 ### Contribution Idea A: Implement a "Tab Reload Indicator"
 *Difficulty: Easy*
 Currently, when a tab is reloading, a small loading spinner is shown next to the URL input. However, the tab title itself doesn't show loading feedback.
-1. Open [Browser.tsx](file:///f:/SIC%20v4/study-in-center/src/components/Browser.tsx).
+1. Open [Browser.tsx](../src/components/Browser.tsx).
 2. Find the tab rendering code (around line 490).
 3. Check `tab.isLoading`. If true, replace the `<Globe>` icon on the tab with a spinning `<Loader2>` icon from Lucide-React.
 
