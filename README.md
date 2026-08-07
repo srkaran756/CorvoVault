@@ -1,14 +1,41 @@
-﻿# CorvoVault
+﻿<div align="center">
 
-CorvoVault is an actively developed Electron desktop application for organizing and working with local study materials.
+<img src="docs/screenshots/banner.png" alt="CorvoVault application banner" width="100%" />
 
-The current application supports local vault organization, PDF viewing and annotation, Markdown notes, profiles, bookmarks, and an embedded browser. Several advanced systems, including local embeddings, AI-assisted retrieval, course workflows, analytics, OCR, and synchronization, are incomplete, experimental, or disabled by default.
+# CorvoVault
 
-This repository prioritizes accurate status reporting over feature marketing.
+**A local study workspace for organizing, reading, and working with learning materials.**
 
-## Current status
+[Project Status](PROJECT_STATUS.md) · [Architecture](ARCHITECTURE.md) · [Development Setup](DEVELOPMENT_WORKFLOW.md)
 
-See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the status of each subsystem.
+</div>
+
+CorvoVault is an actively developed Electron desktop application for organizing local study materials. The current application supports local vault organization, PDF viewing and annotation, Markdown notes, profiles, bookmarks, and an embedded browser.
+
+Several advanced systems, including local embeddings, AI-assisted retrieval, course workflows, analytics, OCR, and synchronization, are incomplete, experimental, or disabled by default. See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the current state of each subsystem.
+
+## Interface preview
+
+The following screenshots show implemented application surfaces. They are representative interface views, not a complete feature list or a claim that every advanced subsystem is production-ready.
+
+### PDF reading and annotation
+
+<img src="docs/screenshots/pdf_reader.png" alt="CorvoVault PDF reader and annotation interface" width="100%" />
+
+The custom PDF reader supports document navigation, reading modes, text selection, and annotation workflows. Some edge cases remain under development.
+
+### Local vault and notes
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/vault.png" alt="CorvoVault local vault interface" width="100%" /></td>
+    <td width="50%"><img src="docs/screenshots/notes.png" alt="CorvoVault notes interface" width="100%" /></td>
+  </tr>
+  <tr>
+    <td align="center">Local topics, folders, and materials</td>
+    <td align="center">Markdown notes and rendered study content</td>
+  </tr>
+</table>
 
 ## Development setup
 
