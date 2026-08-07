@@ -1,6 +1,9 @@
-# AI System and Integration Guide
+﻿# AI System and Integration Guide
 
-CorvoVault features a local-first AI Tutor Study Assistant designed to help users interact with their imported documents (primarily PDFs) using retrieval-augmented generation (RAG) and an agentic tool-use execution cycle. 
+> **Implementation status:** The ingestion, retrieval, and agent code described here is experimental. Local embeddings and vector retrieval are disabled by default because ENABLE_RAG_PIPELINE is currently alse. When AI assistance is enabled, response generation uses a configured remote LLM provider.
+
+
+CorvoVault features a local-first AI Tutor Study Assistant designed to help users interact with their imported documents (primarily PDFs) using retrieval-augmented generation (RAG) and an agentic tool-use execution cycle.
 
 This document explains the architecture of the AI system, its key components, and how it is integrated across the renderer (React UI) and main (Electron) processes.
 
@@ -23,12 +26,12 @@ graph TD
         Handlers <--> |Run Retrieval Tools| ProfService[ProfessorService]
         ProfService <--> |Hybrid Search| DB[(SQLite / Better-SQLite3)]
         ProfService <--> |Vector Search| SQLiteVec[sqlite-vec Extension]
-        
+
         IngestQueue[IngestionQueue] --> |ONNX CPU Inference| TransService[EmbeddingService / Xenova]
         IngestQueue --> |Write Chunks & Vectors| DB
         IngestQueue --> |Index Chunks| SQLiteVec
     end
-    
+
     LLM --> |Structured Response| AgentLoop
     AgentLoop --> |Trigger Highlight / Navigation| UI
 ```
@@ -36,16 +39,16 @@ graph TD
 ### Process Separation of Concerns
 
 1. **Renderer Process (Client)**
-   - **User Interface**: Renders the tutor chat interface ([AiTutorPanel.tsx](file:///f:/SIC%20v4/CorvoVault/src/components/tabs/AiTutorPanel.tsx)) and controls the PDF viewer canvas.
-   - **Agent Orchestration**: Directs the agent tool calling loop ([ai.ts](file:///f:/SIC%20v4/CorvoVault/src/lib/ai.ts)). It manages chat history, formats tool schemas, calls the remote LLM APIs, and triggers UI updates.
+   - **User Interface**: Renders the tutor chat interface ([AiTutorPanel.tsx](../src/components/tabs/AiTutorPanel.tsx)) and controls the PDF viewer canvas.
+   - **Agent Orchestration**: Directs the agent tool calling loop ([ai.ts](../src/lib/ai.ts)). It manages chat history, formats tool schemas, calls the remote LLM APIs, and triggers UI updates.
    - **Remote LLM Calls**: Executes API requests directly to external models (Gemini, OpenAI, Anthropic, or OpenRouter) using the user's encrypted local API keys.
 
 2. **Main Process (Server)**
-   - **Feature Flag Control**: Centralized feature flags in [featureFlags.ts](file:///f:/SIC%20v4/CorvoVault/electron/config/featureFlags.ts) control the RAG subsystem via `isRAGEnabled()`.
-   - **Local Ingestion**: Runs a persistent queue ([ingestionQueue.ts](file:///f:/SIC%20v4/CorvoVault/electron/services/ingestionQueue.ts)) to parse PDFs, chunk text, and compute embeddings.
+   - **Feature Flag Control**: Centralized feature flags in [featureFlags.ts](../electron/config/featureFlags.ts) control the RAG subsystem via `isRAGEnabled()`.
+   - **Local Ingestion**: Runs a persistent queue ([ingestionQueue.ts](../electron/services/ingestionQueue.ts)) to parse PDFs, chunk text, and compute embeddings.
    - **Local Embeddings**: Runs a CPU-based ONNX embedding model locally via `@xenova/transformers` to generate vector representations.
    - **Database Indexing**: Persists document chunks, concepts, session logs, and vector embeddings within SQLite. It executes cosine similarity calculations using the `sqlite-vec` extension.
-   - **Tool Execution Service**: Performs data operations through [ProfessorService.ts](file:///f:/SIC%20v4/CorvoVault/electron/services/professorService.ts) when requested by the agent.
+   - **Tool Execution Service**: Performs data operations through [ProfessorService.ts](../electron/services/professorService.ts) when requested by the agent.
 
 ---
 
@@ -79,7 +82,7 @@ flowchart TD
 
 ## 3. Search and Retrieval Layer
 
-When a student asks a question, the system retrieves relevant context using a multi-step retrieval mechanism managed by [ProfessorService.ts](file:///f:/SIC%20v4/CorvoVault/electron/services/professorService.ts).
+When a student asks a question, the system retrieves relevant context using a multi-step retrieval mechanism managed by [ProfessorService.ts](../electron/services/professorService.ts).
 
 ### Retrieval Modes
 The service classifies the user's intent to route the retrieval:
@@ -167,7 +170,7 @@ To provide an interactive teaching experience, the LLM must return its final ans
 
 ### Visual Rendering & Fallbacks
 - **Auto-Navigation**: If `navigate_to_page` is specified, the React PDF viewer automatically scrolls to that page.
-- **Highlight Matching**: The app matches the `targetText` against the page text in the viewer canvas. It expands ligatures (e.g. `ﬁ` to `fi`) to ensure highlight overlays align correctly.
+- **Highlight Matching**: The app matches the `targetText` against the page text in the viewer canvas. It expands ligatures (e.g. `ï¬` to `fi`) to ensure highlight overlays align correctly.
 - **Canvas Whiteboard**: Board actions draw mathematical formulas, notes, or sketches on a canvas overlaying the PDF view.
 - **JSON Repair & Fallback**: If the LLM outputs invalid JSON or fails to use the `professor_response` tool (a common issue with free or smaller models), the renderer runs a JSON repair algorithm (`repairJson` in `ai.ts`). If parsing still fails, it wraps the raw text as `{ speech: rawText }` to avoid crashing the UI, although visual features are disabled.
 

@@ -34,3 +34,8 @@ resources/pandoc/pandoc.exe
 # Private internal builder documentation
 BUILDER_DEBRIEF.md
 
+
+# Private founder documentation
+private-docs/
+.aider.chat.history.md
+

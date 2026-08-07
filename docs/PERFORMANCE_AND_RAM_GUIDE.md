@@ -1,4 +1,7 @@
-# CorvoVault: Performance, Memory (RAM), & Speed Optimization Guide
+﻿# CorvoVault: Performance, Memory (RAM), & Speed Optimization Guide
+
+> Performance figures in this document are estimates or implementation notes unless explicitly identified as measurements from a reproducible benchmark.
+
 
 This document explains how CorvoVault manages memory, resource consumption, and database speed. It details the app's performance strategies, analyzes core bottlenecks, and provides an educational primer on how Electron processes consume resources under the hood.
 
@@ -6,9 +9,9 @@ This document explains how CorvoVault manages memory, resource consumption, and 
 
 ## 1. The Electron RAM Overhead: Why Desktop Apps Consume Memory
 
-Many users and developers ask: *"Why does a simple desktop app use 300 MB to 1 GB of RAM?"* 
+Many users and developers ask: *"Why does a simple desktop app use 300 MB to 1 GB of RAM?"*
 
-To understand this, you must look at how **Chromium** (the engine behind Google Chrome and Electron) is designed. 
+To understand this, you must look at how **Chromium** (the engine behind Google Chrome and Electron) is designed.
 
 ### Chromium's Process Model
 
@@ -16,11 +19,11 @@ Chromium isolates tasks into separate Operating System (OS) processes. When you 
 
 ```text
 [CorvoVault.exe] (Main Process)
-   ├── [CorvoVault.exe] (GPU Helper Process - handles animations & rendering)
-   ├── [CorvoVault.exe] (Renderer Process - runs React UI, DOM, and Javascript)
-   ├── [CorvoVault.exe] (Network/Utility Processes)
-   └── [CorvoVault.exe] (Guest Renderer Process - Webview Tab 1)
-   └── [CorvoVault.exe] (Guest Renderer Process - Webview Tab 2)
+   â”œâ”€â”€ [CorvoVault.exe] (GPU Helper Process - handles animations & rendering)
+   â”œâ”€â”€ [CorvoVault.exe] (Renderer Process - runs React UI, DOM, and Javascript)
+   â”œâ”€â”€ [CorvoVault.exe] (Network/Utility Processes)
+   â””â”€â”€ [CorvoVault.exe] (Guest Renderer Process - Webview Tab 1)
+   â””â”€â”€ [CorvoVault.exe] (Guest Renderer Process - Webview Tab 2)
 ```
 
 Each process has its own:
@@ -28,7 +31,7 @@ Each process has its own:
 - **Memory Heap**: The memory sandbox where variables, images, and DOM structures are stored.
 - **Render Pipelines**: Systems that draw pixels on your screen.
 
-Because these processes do not share memory directly, Electron apps have a high base RAM footprint. A blank window consumes roughly 120–200 MB of RAM just to spin up the Chromium wrapper.
+Because these processes do not share memory directly, Electron apps have a high base RAM footprint. A blank window consumes roughly 120â€“200 MB of RAM just to spin up the Chromium wrapper.
 
 ---
 
@@ -46,7 +49,7 @@ CorvoVault stores metadata, bookmarks, profiles, and annotations in a local SQLi
 By default, SQLite works in **Rollback Journal Mode** with **Full Synchronous commits**. This means every time the app writes to the database, SQLite locks the entire database and waits for the hard drive to physically write the data to the disk             platter before continuing. This causes noticeable stuttering in desktop UIs.
 
 **CorvoVault's Solution**:
-In [connection.ts](file:///f:/SIC%20v4/CorvoVault/electron/db/connection.ts), the database is initialized with two performance-tuning PRAGMAs:
+In [connection.ts](../electron/db/connection.ts), the database is initialized with two performance-tuning PRAGMAs:
 ```sql
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
@@ -72,7 +75,7 @@ When a user imports a PDF, the app must:
 If this work was done inside the React UI process, the app's interface would freeze completely, dropping to 0 frames-per-second (FPS) during ingestion.
 
 **CorvoVault's Solution**:
-CorvoVault delegates this work to an asynchronous main process queue ([ingestionQueue.ts](file:///f:/SIC%20v4/CorvoVault/electron/services/ingestionQueue.ts)):
+CorvoVault delegates this work to an asynchronous main process queue ([ingestionQueue.ts](../electron/services/ingestionQueue.ts)):
 
 ```mermaid
 graph LR
@@ -117,9 +120,9 @@ To avoid repeating this heavy conversion, CorvoVault caches the converted PDFs i
 While the app uses standard optimizations, there are several architectural choices that cause performance degradation and high RAM usage under heavy workloads:
 
 ### 1. The React Webview RAM Leaks
-As detailed in the [In-App Browser Guide](file:///f:/SIC%20v4/study-in-center/docs/IN_APP_BROWSER_GUIDE.md), every open browser tab is kept in the React DOM. It is merely hidden with CSS (`display: none`). 
+As detailed in the [In-App Browser Guide](../docs/IN_APP_BROWSER_GUIDE.md), every open browser tab is kept in the React DOM. It is merely hidden with CSS (`display: none`).
 - **The Issue**: Hidden tabs continue to run separate Chromium OS processes, consuming roughly 150 MB of RAM per tab.
-- **The Result**: Opening 8–10 tabs can drive the application's RAM usage past 1.5 GB.
+- **The Result**: Opening 8â€“10 tabs can drive the application's RAM usage past 1.5 GB.
 
 ### 2. Synchronous Database Thread Blocking
 The app uses `better-sqlite3` in the Main Process. While `better-sqlite3` is extremely fast because it runs in-process without network overhead, **it is entirely synchronous**.
@@ -140,7 +143,7 @@ Performance tuning is an excellent way to learn database design, process managem
 ### Task A: Write a Migration to Add a SQLite Index
 *Difficulty: Easy*
 When the app searches materials by their folder or profile, SQLite has to scan every row if there are no indexes. Adding indexes speeds up queries significantly.
-1. Open [migrate.ts](file:///f:/SIC%20v4/study-in-center/electron/db/migrate.ts).
+1. Open [migrate.ts](../electron/db/migrate.ts).
 2. Look at how tables are constructed and how indexes are created (e.g., `CREATE INDEX IF NOT EXISTS ...`).
 3. Find a column that is queried often but lacks an index (for example, `trashed_at` on the `materials` table).
 4. Write a new migration step in `migrate.ts` to create the index, improving list loading speeds for large vaults.
@@ -148,7 +151,7 @@ When the app searches materials by their folder or profile, SQLite has to scan e
 ### Task B: Optimize Inactive Tabs (Lazy Sleeping)
 *Difficulty: Medium*
 Reduce RAM overhead by putting inactive browser tabs to sleep.
-1. Open [Browser.tsx](file:///f:/SIC%20v4/study-in-center/src/components/Browser.tsx).
+1. Open [Browser.tsx](../src/components/Browser.tsx).
 2. Modify the tab state to store the tab's HTML webview reference ONLY when active.
 3. If a tab is inactive for more than 10 minutes, unmount the `<webview>` element. When the user clicks the tab again, mount it back and reload the URL. This instantly frees 150 MB of RAM per inactive tab.
 
