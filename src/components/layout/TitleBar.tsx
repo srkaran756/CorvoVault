@@ -270,7 +270,7 @@ export default function TitleBar() {
   };
 
   return (
-    <header className="w-full h-11 shrink-0 bg-surface/90 border-b border-outline-variant/10 backdrop-blur-xl flex items-center justify-between px-4 z-40 transition-all select-none duration-200 drag-handle relative">
+    <header className="w-full h-11 shrink-0 bg-surface/90 border-b border-outline-variant/10 backdrop-blur-xl flex items-center justify-between pl-4 pr-0 z-40 transition-all select-none duration-200 drag-handle relative">
       {/* Left: Logo (drag-handle) */}
       <div className="flex items-center gap-2 pr-3 shrink-0 select-none drag-handle">
         <div className="flex items-center gap-2">
@@ -304,34 +304,40 @@ export default function TitleBar() {
 
           return (
             <React.Fragment key={tab.id}>
-              <button
+              <div
                 data-tab-id={tab.id}
                 onClick={() => handleTabClick(tab.id)}
                 aria-label={`Switch to tab: ${tab.title}`}
                 title={tab.title}
-                className={`h-8 px-3 flex items-center gap-1.5 text-[11px] font-bold transition-all relative workspace-tab-item duration-200 outline-none shrink-0 group focus:ring-2 focus:ring-primary/30 ${
+                role="tab"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    handleTabClick(tab.id);
+                  }
+                }}
+                className={`h-8 px-3 flex items-center gap-1.5 text-[11px] font-bold transition-all relative workspace-tab-item duration-200 outline-none shrink-0 group focus:ring-2 focus:ring-primary/30 cursor-pointer ${
                   isActive
                     ? `${isDark ? 'bg-surface-container after:bg-surface-container' : 'bg-white after:bg-white'} border-t border-l border-r border-outline-variant/15 rounded-t-[6px] text-accent z-10 after:content-[""] after:absolute after:bottom-[-1px] after:left-0 after:right-0 after:h-[1.5px] after:z-20 shadow-sm`
                     : 'bg-transparent border-transparent text-outline hover:text-on-surface hover:bg-surface-container-lowest/40 rounded-t-[4px]'
                 }`}
               >
-                <Icon className={`w-3 h-3 transition-transform duration-200 group-hover:scale-105 ${isActive ? 'text-accent' : 'text-outline/70 group-hover:text-on-surface'}`} />
+                <Icon className={`w-3.5 h-3.5 transition-transform duration-200 group-hover:scale-105 ${isActive ? 'text-accent' : 'text-outline/70 group-hover:text-on-surface'}`} />
                 {(tab.type === 'document' || tab.type === 'note') && (
                   <span className="w-1 h-1 rounded-full bg-accent shrink-0" />
                 )}
                 <span className="truncate max-w-[70px] sm:max-w-[100px] md:max-w-[140px] auto-symbol-label">{tab.title}</span>
 
-                <span
+                <button
+                  type="button"
                   onClick={(e) => handleCloseClick(e, tab.id)}
-                  className="p-0.5 rounded-full hover:bg-outline-variant/25 hover:text-red-500 text-outline/50 transition-colors shrink-0 outline-none opacity-40 group-hover:opacity-100 cursor-pointer"
+                  className="p-1 rounded-full hover:bg-outline-variant/30 hover:text-red-500 text-outline/70 transition-all shrink-0 outline-none opacity-60 group-hover:opacity-100 cursor-pointer flex items-center justify-center ml-0.5"
                   title="Close Tab"
                   aria-label={`Close tab ${tab.title}`}
-                  role="button"
-                  tabIndex={0}
                 >
-                  <X className="w-2.5 h-2.5" />
-                </span>
-              </button>
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
 
               {!isActive && !isNextActive && index < tabs.length - 1 && (
                 <div className="h-3 w-[1px] bg-outline-variant/10 self-center mx-[1.5px] shrink-0" />
@@ -357,7 +363,7 @@ export default function TitleBar() {
       </div>
 
       {/* Right: Compact search & window controls */}
-      <div className="flex items-center gap-2 shrink-0 no-drag pl-3 h-full ui-invisible-border">
+      <div className="flex items-center gap-2 shrink-0 no-drag pl-2 h-full">
         {/* Obsidian-Style Theme Mode Toggle */}
         <button
           onClick={handleThemeToggle}
@@ -422,57 +428,49 @@ export default function TitleBar() {
 
         {/* Electron Window Controls */}
         {isElectron && (
-          <div className="flex items-center border-l border-outline-variant/10 pl-1.5 h-full -mr-4">
+          <div className="flex items-center border-l border-outline-variant/10 pl-1 h-full shrink-0 no-drag">
             {/* Minimize */}
             <button
+              type="button"
               onClick={handleMinimize}
-              className="w-9 h-11 flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high hover:text-primary transition-all duration-200 active:scale-[0.85] focus:outline-none cursor-pointer"
+              className="w-11 h-full flex items-center justify-center text-on-surface-variant hover:bg-on-surface/10 hover:text-on-surface transition-colors duration-150 focus:outline-none cursor-pointer"
               title="Minimize"
               aria-label="Minimize Window"
             >
-              <svg width="8" height="1" viewBox="0 0 10 1">
-                <rect width="10" height="1" fill="currentColor" />
+              <svg width="10" height="10" viewBox="0 0 10 10" className="w-3 h-3">
+                <path d="M1 5h8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" fill="none" />
               </svg>
             </button>
 
-            {/* Maximize */}
+            {/* Maximize / Restore */}
             <button
+              type="button"
               onClick={handleMaximize}
-              className="w-9 h-11 flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high hover:text-primary transition-all duration-200 active:scale-[0.85] focus:outline-none cursor-pointer"
+              className="w-11 h-full flex items-center justify-center text-on-surface-variant hover:bg-on-surface/10 hover:text-on-surface transition-colors duration-150 focus:outline-none cursor-pointer"
               title={isMaximized ? 'Restore' : 'Maximize'}
               aria-label={isMaximized ? 'Restore Window' : 'Maximize Window'}
             >
               {isMaximized ? (
-                <svg width="8" height="8" viewBox="0 0 10 10">
-                  <path
-                    d="M2,2 L2,0 L10,0 L10,8 L8,8 L8,10 L0,10 L0,2 Z M3,2 L8,2 L8,7 L9,7 L9,1 L3,1 Z M1,3 L7,3 L7,9 L1,9 Z"
-                    fill="currentColor"
-                  />
+                <svg width="10" height="10" viewBox="0 0 10 10" className="w-3 h-3 fill-none">
+                  <path d="M3.5 1.5h5v5M1.5 3.5h5v5h-5z" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               ) : (
-                <svg width="8" height="8" viewBox="0 0 10 10">
-                  <path
-                    d="M1,1 L9,1 L9,9 L1,9 Z M0,0 L0,10 L10,10 L10,0 Z"
-                    fill="currentColor"
-                  />
+                <svg width="10" height="10" viewBox="0 0 10 10" className="w-3 h-3 fill-none">
+                  <rect x="1.5" y="1.5" width="7" height="7" stroke="currentColor" strokeWidth="1.2" rx="0.5" />
                 </svg>
               )}
             </button>
 
-            {/* Close */}
+            {/* Close / Cross Button */}
             <button
+              type="button"
               onClick={handleClose}
-              className="w-9 h-11 flex items-center justify-center text-on-surface-variant hover:bg-[#e81123] hover:text-white transition-all duration-200 active:scale-[0.85] focus:outline-none cursor-pointer rounded-tr-lg"
+              className="w-12 h-full flex items-center justify-center text-on-surface-variant hover:bg-[#e81123] hover:text-white transition-colors duration-150 focus:outline-none cursor-pointer"
               title="Close"
               aria-label="Close Window"
             >
-              <svg width="8" height="8" viewBox="0 0 10 10">
-                <path
-                  d="M0,0 L10,10 M10,0 L0,10"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  strokeLinecap="round"
-                />
+              <svg width="10" height="10" viewBox="0 0 10 10" className="w-3 h-3">
+                <path d="M1.5 1.5l7 7m0-7l-7 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
               </svg>
             </button>
           </div>
