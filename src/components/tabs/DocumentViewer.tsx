@@ -237,25 +237,47 @@ export default function DocumentViewer({ data: material, isActive = true }: Docu
   };
 
   const handleLinkClick = (url: string) => {
-    const materialId = url.replace('corvovault-material://', '');
-    if (user) {
-      ipcService.vault.getAllMaterials(user.id).then(allMaterials => {
-        const mat = allMaterials.find((m: any) => m.id === materialId);
-        if (mat) {
-          const type = mat.boxType === 'note' ? 'note' : 'document';
-          window.dispatchEvent(new CustomEvent('corvovault:switch-tab', { 
-            detail: { 
-              tab: { 
-                type, 
-                title: mat.title, 
-                data: mat 
-              } 
-            } 
-          }));
-        } else {
-          alert('Linked material not found.');
+    if (!url) return;
+
+    if (url.startsWith('corvovault-pdf-page://') || url.startsWith('corvovault-page://') || url.startsWith('#page-')) {
+      const match = url.match(/(\d+)/);
+      if (match) {
+        const pageNum = parseInt(match[1], 10);
+        if (!isNaN(pageNum)) {
+          if (pdfViewerRef.current && typeof pdfViewerRef.current.jumpToPage === 'function') {
+            pdfViewerRef.current.jumpToPage(pageNum);
+          }
+          window.dispatchEvent(
+            new CustomEvent('corvovault:pdf-jump-page', {
+              detail: { materialId: material.id, page: pageNum },
+            })
+          );
         }
-      });
+      }
+      return;
+    }
+
+    if (url.startsWith('corvovault-material://')) {
+      const materialId = url.replace('corvovault-material://', '');
+      if (user) {
+        ipcService.vault.getAllMaterials(user.id).then(allMaterials => {
+          const mat = allMaterials.find((m: any) => m.id === materialId);
+          if (mat) {
+            const type = mat.boxType === 'note' ? 'note' : 'document';
+            window.dispatchEvent(new CustomEvent('corvovault:switch-tab', { 
+              detail: { 
+                tab: { 
+                  type, 
+                  title: mat.title, 
+                  data: mat 
+                } 
+              } 
+            }));
+          } else {
+            alert('Linked material not found.');
+          }
+        });
+      }
     }
   };
 
@@ -524,10 +546,11 @@ export default function DocumentViewer({ data: material, isActive = true }: Docu
               {material.title}
             </span>
           </div>
-          <div className="flex items-center gap-1 shrink-0 ml-2">
+          <div className="flex items-center gap-1 shrink-0 ml-2 pr-2 ui-invisible-border">
             <button
               onClick={openExternally}
-              className="p-1.5 hover:bg-surface-container-high text-outline hover:text-primary rounded-lg transition-all flex items-center justify-center cursor-pointer"
+              aria-label="Open Document Externally"
+              className="p-1.5 hover:bg-surface-container-high text-outline hover:text-primary rounded-lg transition-all flex items-center justify-center cursor-pointer focus:ring-2 focus:ring-primary/30"
               title="Open Externally"
             >
               <ExternalLink className="w-3.5 h-3.5" />
@@ -535,7 +558,8 @@ export default function DocumentViewer({ data: material, isActive = true }: Docu
             {/* Notes toggle — lives in the toolbar, never floats outside its container */}
             <button
               onClick={() => setIsNotesCollapsed(!isNotesCollapsed)}
-              className={`p-1.5 rounded-lg transition-all flex items-center justify-center cursor-pointer ${
+              aria-label={isNotesCollapsed ? 'Show Notes Panel' : 'Hide Notes Panel'}
+              className={`p-1.5 rounded-lg transition-all flex items-center justify-center cursor-pointer focus:ring-2 focus:ring-primary/30 ${
                 isNotesCollapsed
                   ? 'text-outline hover:bg-surface-container-high hover:text-primary'
                   : 'bg-primary/10 text-primary hover:bg-primary/20'
@@ -1381,7 +1405,7 @@ function NoteCard({
   };
 
   return (
-    <div className="p-4 bg-surface-container-lowest rounded-xl border border-outline-variant/15 group shadow-sm transition-all hover:shadow-md flex flex-col gap-2 relative">
+    <div className="p-4 bg-surface-container-lowest rounded-xl border border-outline-variant/15 group shadow-sm transition-all hover:shadow-md flex flex-col gap-2 relative overflow-hidden min-w-0 break-words">
       {isEditing ? (
         <div className="space-y-2">
           <div

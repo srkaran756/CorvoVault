@@ -269,10 +269,25 @@ export function useMaterialNotes(materialId: string) {
   const { user } = useAuth();
   const [notes, setNotes] = useState<MaterialNote[]>([]);
 
-  useEffect(() => {
+  const reloadNotes = useCallback(() => {
     if (!user || !materialId) return;
     ipcService.notes.getAll(materialId).then(setNotes);
   }, [user, materialId]);
+
+  useEffect(() => {
+    reloadNotes();
+  }, [reloadNotes]);
+
+  useEffect(() => {
+    const handleRefresh = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (!customEvent.detail?.materialId || customEvent.detail.materialId === materialId) {
+        reloadNotes();
+      }
+    };
+    window.addEventListener('material-note:refresh', handleRefresh);
+    return () => window.removeEventListener('material-note:refresh', handleRefresh);
+  }, [materialId, reloadNotes]);
 
   const addNote = useCallback(async (content: string) => {
     if (!user) return;
