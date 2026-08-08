@@ -1,4 +1,5 @@
 import React from 'react';
+import { BookOpen } from 'lucide-react';
 
 /**
  * Converts a Rich-Text Editor HTML string back into clean Markdown.
@@ -259,10 +260,11 @@ export function parseRichText(rawText: string, options: ParseRichTextOptions) {
       }
       if (p.type === 'link') {
         const isLocalMaterial = p.url?.startsWith('corvovault-material://');
+        const isPdfPageLink = p.url?.startsWith('corvovault-pdf-page://') || p.url?.startsWith('corvovault-page://') || p.url?.startsWith('#page-');
         
         const handleClick = (e: React.MouseEvent) => {
           e.preventDefault();
-          if (isLocalMaterial && onLinkClick && p.url) {
+          if ((isLocalMaterial || isPdfPageLink) && onLinkClick && p.url) {
             onLinkClick(p.url);
           } else if (openExternal && p.url) {
             openExternal(p.url);
@@ -270,6 +272,21 @@ export function parseRichText(rawText: string, options: ParseRichTextOptions) {
             window.open(p.url, '_blank');
           }
         };
+
+        if (isPdfPageLink) {
+          return (
+            <a 
+              key={idx} 
+              href={p.url || '#'} 
+              onClick={handleClick} 
+              className="inline-flex items-center gap-1 px-2 py-0.5 my-0.5 text-[10px] font-bold rounded-md bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-all cursor-pointer select-none no-underline shadow-xs"
+              title="Click to jump to this page in the PDF"
+            >
+              <BookOpen className="w-3 h-3 text-primary shrink-0" />
+              <span>{p.content}</span>
+            </a>
+          );
+        }
 
         return (
           <a 

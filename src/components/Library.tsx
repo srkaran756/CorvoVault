@@ -459,23 +459,25 @@ export default function Library({ onNavigate, isActive = true }: LibraryProps) {
 
       {/* Main Workspace */}
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="p-5 border-b border-outline-variant/10 flex items-center gap-4 bg-surface/50 backdrop-blur-md">
+        <div className="p-5 border-b border-outline-variant/10 flex items-center gap-4 bg-surface/50 backdrop-blur-md ui-invisible-border">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-outline w-4 h-4" />
             <input
               type="text"
               placeholder="Search in folder..."
+              aria-label="Search in folder"
               value={inputValue}
               onChange={(e) => handleSearchInput(e.target.value)}
               className="w-full bg-surface-container-low border-none rounded-full py-2 pl-10 pr-4 text-sm focus:ring-2 focus:ring-primary/20 focus:outline-none transition-all"
             />
           </div>
-          <div className="flex items-center gap-2 text-xs font-bold text-outline">
+          <div className="flex items-center gap-2 text-xs font-bold text-outline shrink-0">
             <span className="px-3 py-1 bg-surface-container-high rounded-full">{filteredMaterials.length} Items</span>
           </div>
           <button
             onClick={() => setShowPdfSearch(s => !s)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all ${
+            aria-label="Search Web for PDFs"
+            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer focus:ring-2 focus:ring-primary/30 ${
               showPdfSearch
                 ? 'bg-primary text-on-primary shadow-lg'
                 : 'bg-surface-container-high text-on-surface-variant hover:bg-primary/10 hover:text-primary'
@@ -483,7 +485,7 @@ export default function Library({ onNavigate, isActive = true }: LibraryProps) {
             title="Search the web for PDFs"
           >
             <FileSearch className="w-4 h-4" />
-            Search Web for PDFs
+            <span className="hidden sm:inline auto-symbol-label">Search Web for PDFs</span>
           </button>
         </div>
 

@@ -71,7 +71,9 @@ export default function Sidebar() {
                   openTab(item.id as TabType);
                 }
               }}
-              className={`w-full flex items-center rounded-lg font-headline font-semibold text-xs tracking-tight transition-all py-2 px-2.5 outline-none relative group ${
+              aria-label={item.label}
+              title={item.label}
+              className={`w-full flex items-center rounded-lg font-headline font-semibold text-xs tracking-tight transition-all py-2 px-2.5 outline-none relative group focus:ring-2 focus:ring-primary/30 ${
                 isActive
                   ? 'text-primary bg-primary/5'
                   : 'text-on-surface-variant hover:bg-surface-container-high'
@@ -85,7 +87,7 @@ export default function Sidebar() {
               <Icon className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-105 ${sidebarCollapsed ? 'mx-auto' : 'mr-3'}`} />
               
               {!sidebarCollapsed && (
-                <span className="truncate">{item.label}</span>
+                <span className="truncate auto-symbol-label">{item.label}</span>
               )}
 
               {/* Tooltip for Collapsed Sidebar */}
@@ -101,7 +103,9 @@ export default function Sidebar() {
 
       <button
         onClick={toggleSidebar}
-        className="w-full flex items-center justify-center py-1.5 hover:bg-surface-container-high rounded-lg text-outline-variant hover:text-primary transition-colors mb-2 shrink-0 outline-none group relative"
+        aria-label={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+        title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+        className="w-full flex items-center justify-center py-1.5 hover:bg-surface-container-high rounded-lg text-outline-variant hover:text-primary transition-colors mb-2 shrink-0 outline-none group relative focus:ring-2 focus:ring-primary/30"
       >
         {sidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
         {/* Tooltip for Collapse Sidebar */}

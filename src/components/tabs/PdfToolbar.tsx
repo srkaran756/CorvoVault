@@ -50,6 +50,8 @@ interface PdfToolbarProps {
   ingestionStatus: { status: string; progress: number } | null;
   workspaceMode: 'read' | 'study' | 'research' | 'deep' | 'blackboard' | 'custom';
   onSetWorkspaceMode: (mode: 'read' | 'study' | 'research' | 'deep' | 'blackboard') => void;
+  onExportAnnotations?: () => void;
+  isExportingNotes?: boolean;
 }
 
 export default function PdfToolbar({
@@ -79,6 +81,8 @@ export default function PdfToolbar({
   ingestionStatus,
   workspaceMode,
   onSetWorkspaceMode,
+  onExportAnnotations,
+  isExportingNotes = false,
 }: PdfToolbarProps) {
   const pageInputRef = useRef<HTMLInputElement>(null);
   const [inputValue, setInputValue] = useState(String(currentPage));
@@ -107,19 +111,21 @@ export default function PdfToolbar({
 
   return (
     // Wrapper: flex column so the annotation strip sits below without overflowing
-    <div className="shrink-0 bg-surface border-b border-outline-variant/10 z-40 relative" style={{ isolation: 'isolate' }}>
+    <div className="shrink-0 bg-surface border-b border-outline-variant/10 z-40 relative ui-invisible-border" style={{ isolation: 'isolate' }}>
 
       {/* ── MAIN TOOLBAR ROW ── */}
-      <div className="h-10 px-2 flex items-center justify-between gap-2">
+      <div className="h-10 px-2 flex items-center justify-between gap-2 overflow-x-auto no-scrollbar">
 
         {/* LEFT: Page nav + Workspace mode */}
         <div className="flex items-center gap-2 min-w-0 shrink-0">
           {/* Page navigation */}
-          <div className="flex items-center gap-0.5 bg-surface-container border border-outline-variant/15 rounded-lg p-0.5">
+          <div className="flex items-center gap-0.5 bg-surface-container border border-outline-variant/15 rounded-lg p-0.5 shrink-0">
             <button
               onClick={() => jumpToPage(currentPage - 1)}
               disabled={currentPage <= 1}
-              className="p-1 hover:bg-surface-container-high rounded text-outline hover:text-on-surface disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+              aria-label="Previous Page"
+              title="Previous Page"
+              className="p-1 hover:bg-surface-container-high rounded text-outline hover:text-on-surface disabled:opacity-30 disabled:pointer-events-none cursor-pointer focus:ring-2 focus:ring-primary/30"
             >
               <ChevronLeft className="w-3.5 h-3.5" />
             </button>
@@ -128,6 +134,7 @@ export default function PdfToolbar({
                 ref={pageInputRef}
                 type="text"
                 value={inputValue}
+                aria-label="Current Page Number"
                 onChange={e => {
                   // Allow empty string or digits only
                   const val = e.target.value;
@@ -149,21 +156,24 @@ export default function PdfToolbar({
             <button
               onClick={() => jumpToPage(currentPage + 1)}
               disabled={currentPage >= numPages}
-              className="p-1 hover:bg-surface-container-high rounded text-outline hover:text-on-surface disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+              aria-label="Next Page"
+              title="Next Page"
+              className="p-1 hover:bg-surface-container-high rounded text-outline hover:text-on-surface disabled:opacity-30 disabled:pointer-events-none cursor-pointer focus:ring-2 focus:ring-primary/30"
             >
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
 
           {/* Workspace mode segmented control */}
-          <div className="flex items-center bg-surface-container border border-outline-variant/15 rounded-xl p-0.5 gap-0.5 shadow-sm">
+          <div className="flex items-center bg-surface-container border border-outline-variant/15 rounded-xl p-0.5 gap-0.5 shadow-sm shrink-0">
             {modes.map(m => {
               const isActive = workspaceMode === m.key;
               return (
                 <button
                   key={m.key}
                   onClick={() => onSetWorkspaceMode(m.key)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wide transition-all cursor-pointer select-none ${
+                  aria-label={m.tooltip}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wide transition-all cursor-pointer select-none focus:ring-2 focus:ring-primary/30 ${
                     isActive
                       ? 'bg-primary text-on-primary shadow-sm scale-[1.02]'
                       : 'text-outline hover:text-on-surface hover:bg-surface-container-high'
@@ -171,7 +181,7 @@ export default function PdfToolbar({
                   title={m.tooltip}
                 >
                   {m.icon}
-                  <span className="hidden sm:inline">{m.label}</span>
+                  <span className="hidden md:inline auto-symbol-label">{m.label}</span>
                 </button>
               );
             })}
@@ -180,24 +190,27 @@ export default function PdfToolbar({
 
         {/* CENTER: Zoom + Rotate */}
         <div className="flex items-center gap-1.5 shrink-0">
-          <div className="flex items-center bg-surface-container border border-outline-variant/15 rounded-lg p-0.5">
+          <div className="flex items-center bg-surface-container border border-outline-variant/15 rounded-lg p-0.5 shrink-0">
             <button
               onClick={() => setZoom(z => Math.max(0.4, +(z - 0.1).toFixed(1)))}
-              className="p-1 hover:bg-surface-container-high rounded text-outline hover:text-on-surface cursor-pointer"
+              aria-label="Zoom Out"
+              className="p-1 hover:bg-surface-container-high rounded text-outline hover:text-on-surface cursor-pointer focus:ring-2 focus:ring-primary/30"
               title="Zoom Out"
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => setZoom(1.2)}
-              className="px-2 text-[10px] font-bold text-outline hover:text-on-surface cursor-pointer min-w-[42px] text-center"
+              aria-label="Reset Zoom to 100%"
+              className="px-2 text-[10px] font-bold text-outline hover:text-on-surface cursor-pointer min-w-[42px] text-center focus:ring-2 focus:ring-primary/30"
               title="Reset Zoom"
             >
               {Math.round(zoom * 100)}%
             </button>
             <button
               onClick={() => setZoom(z => Math.min(3.0, +(z + 0.1).toFixed(1)))}
-              className="p-1 hover:bg-surface-container-high rounded text-outline hover:text-on-surface cursor-pointer"
+              aria-label="Zoom In"
+              className="p-1 hover:bg-surface-container-high rounded text-outline hover:text-on-surface cursor-pointer focus:ring-2 focus:ring-primary/30"
               title="Zoom In"
             >
               <ZoomIn className="w-3.5 h-3.5" />
@@ -205,7 +218,8 @@ export default function PdfToolbar({
           </div>
           <button
             onClick={() => setRotation(r => (r + 90) % 360)}
-            className="p-1.5 hover:bg-surface-container-high text-outline hover:text-on-surface rounded-lg border border-outline-variant/15 bg-surface cursor-pointer"
+            aria-label="Rotate Document 90 degrees"
+            className="p-1.5 hover:bg-surface-container-high text-outline hover:text-on-surface rounded-lg border border-outline-variant/15 bg-surface cursor-pointer focus:ring-2 focus:ring-primary/30"
             title="Rotate"
           >
             <RotateCw className="w-3.5 h-3.5" />
@@ -215,7 +229,7 @@ export default function PdfToolbar({
         {/* RIGHT: Reading filter + Annotate toggle + Ingestion status */}
         <div className="flex items-center gap-1.5 shrink-0">
           {/* Reading filter */}
-          <div className="flex items-center bg-surface-container border border-outline-variant/15 rounded-lg p-0.5 gap-0.5">
+          <div className="flex items-center bg-surface-container border border-outline-variant/15 rounded-lg p-0.5 gap-0.5 shrink-0">
             {([
               { key: 'default', icon: <Sun className="w-3 h-3" />, label: 'Light' },
               { key: 'sepia', icon: <Eye className="w-3 h-3 text-amber-600" />, label: 'Sepia' },
@@ -224,13 +238,14 @@ export default function PdfToolbar({
               <button
                 key={f.key}
                 onClick={() => setReadingFilter(f.key)}
-                className={`flex items-center gap-1 px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wide transition-colors cursor-pointer ${
+                aria-label={`Set ${f.label} reading filter`}
+                className={`flex items-center gap-1 px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wide transition-colors cursor-pointer focus:ring-2 focus:ring-primary/30 ${
                   readingFilter === f.key ? 'bg-surface text-on-surface shadow-sm' : 'text-outline hover:text-on-surface'
                 }`}
-                title={f.label}
+                title={`${f.label} Mode`}
               >
                 {f.icon}
-                <span className="hidden sm:inline">{f.label}</span>
+                <span className="hidden lg:inline auto-symbol-label">{f.label}</span>
               </button>
             ))}
           </div>
@@ -238,7 +253,8 @@ export default function PdfToolbar({
           {/* Annotate toggle button — sub-toolbar opens in the row below */}
           <button
             onClick={() => setIsDrawMode(d => !d)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wide cursor-pointer transition-all border ${
+            aria-label="Toggle Annotation Mode"
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wide cursor-pointer transition-all border focus:ring-2 focus:ring-primary/30 ${
               isDrawMode
                 ? 'bg-primary text-on-primary border-primary shadow-sm'
                 : 'text-outline border-outline-variant/15 bg-surface-container hover:text-on-surface hover:bg-surface-container-high'
@@ -246,14 +262,33 @@ export default function PdfToolbar({
             title="Toggle Annotation Mode"
           >
             <Pencil className="w-3.5 h-3.5" />
-            <span>Annotate</span>
+            <span className="hidden sm:inline auto-symbol-label">Annotate</span>
           </button>
+
+          {/* Export Annotations as Markdown Note button */}
+          {onExportAnnotations && (
+            <button
+              onClick={onExportAnnotations}
+              disabled={isExportingNotes}
+              aria-label="Export all PDF Annotations & Highlights into a Markdown Note"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wide cursor-pointer transition-all border text-outline border-outline-variant/15 bg-surface-container hover:text-on-surface hover:bg-surface-container-high disabled:opacity-50 focus:ring-2 focus:ring-primary/30"
+              title="Export all PDF Annotations & Highlights into a Markdown Note"
+            >
+              {isExportingNotes ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+              ) : (
+                <StickyNote className="w-3.5 h-3.5 text-primary" />
+              )}
+              <span className="hidden sm:inline auto-symbol-label">Export Note</span>
+            </button>
+          )}
 
           {/* Ingestion Status indicator */}
           {ingestionStatus && ingestionStatus.status !== 'ready' && (
             <div
               className="flex items-center gap-1.5 px-2 py-1 bg-surface-container border border-outline-variant/10 rounded-lg text-[8px] font-bold text-outline uppercase tracking-wider cursor-help"
               title={`AI Document Map Status: ${ingestionStatus.status} (${ingestionStatus.progress}%)`}
+              aria-label={`AI Document Map Status: ${ingestionStatus.status} (${ingestionStatus.progress}%)`}
               onClick={() => onSetWorkspaceMode('study')}
             >
               {ingestionStatus.status === 'processing' ? (
@@ -261,7 +296,7 @@ export default function PdfToolbar({
               ) : (
                 <div className="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse" />
               )}
-              <span className="hidden md:inline">indexing {ingestionStatus.progress}%</span>
+              <span className="hidden md:inline auto-symbol-label">indexing {ingestionStatus.progress}%</span>
             </div>
           )}
         </div>
@@ -391,8 +426,23 @@ export default function PdfToolbar({
             </>
           )}
 
-          {/* Spacer + Clear */}
+          {/* Spacer + Actions */}
           <div className="flex-1" />
+          {onExportAnnotations && (
+            <button
+              onClick={onExportAnnotations}
+              disabled={isExportingNotes}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold text-primary hover:bg-primary/10 cursor-pointer transition-colors border border-primary/20 shrink-0 mr-1"
+              title="Export all annotations to Markdown Note"
+            >
+              {isExportingNotes ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <StickyNote className="w-3 h-3" />
+              )}
+              <span>Export Note</span>
+            </button>
+          )}
           <button
             onClick={clearPageAnnotations}
             className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold text-outline hover:text-red-500 hover:bg-red-50 cursor-pointer transition-colors border border-outline-variant/15 shrink-0"

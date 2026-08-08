@@ -307,7 +307,9 @@ export default function TitleBar() {
               <button
                 data-tab-id={tab.id}
                 onClick={() => handleTabClick(tab.id)}
-                className={`h-8 px-3 flex items-center gap-1.5 text-[11px] font-bold transition-all relative workspace-tab-item duration-200 outline-none shrink-0 group ${
+                aria-label={`Switch to tab: ${tab.title}`}
+                title={tab.title}
+                className={`h-8 px-3 flex items-center gap-1.5 text-[11px] font-bold transition-all relative workspace-tab-item duration-200 outline-none shrink-0 group focus:ring-2 focus:ring-primary/30 ${
                   isActive
                     ? `${isDark ? 'bg-surface-container after:bg-surface-container' : 'bg-white after:bg-white'} border-t border-l border-r border-outline-variant/15 rounded-t-[6px] text-accent z-10 after:content-[""] after:absolute after:bottom-[-1px] after:left-0 after:right-0 after:h-[1.5px] after:z-20 shadow-sm`
                     : 'bg-transparent border-transparent text-outline hover:text-on-surface hover:bg-surface-container-lowest/40 rounded-t-[4px]'
@@ -317,14 +319,17 @@ export default function TitleBar() {
                 {(tab.type === 'document' || tab.type === 'note') && (
                   <span className="w-1 h-1 rounded-full bg-accent shrink-0" />
                 )}
-                <span className="truncate max-w-[100px]">{tab.title}</span>
+                <span className="truncate max-w-[70px] sm:max-w-[100px] md:max-w-[140px] auto-symbol-label">{tab.title}</span>
 
                 <span
                   onClick={(e) => handleCloseClick(e, tab.id)}
-                  className="p-0.5 rounded-full hover:bg-outline-variant/25 hover:text-red-500 text-outline/50 transition-colors shrink-0 outline-none opacity-40 group-hover:opacity-100"
+                  className="p-0.5 rounded-full hover:bg-outline-variant/25 hover:text-red-500 text-outline/50 transition-colors shrink-0 outline-none opacity-40 group-hover:opacity-100 cursor-pointer"
                   title="Close Tab"
+                  aria-label={`Close tab ${tab.title}`}
+                  role="button"
+                  tabIndex={0}
                 >
-                  <X className="w-2 h-2" />
+                  <X className="w-2.5 h-2.5" />
                 </span>
               </button>
 
@@ -338,7 +343,9 @@ export default function TitleBar() {
         {/* New Tab "+" button */}
         <button
           onClick={() => openTab('today', 'Today')}
-          className="h-8 w-8 flex items-center justify-center text-outline hover:text-on-surface hover:bg-surface-container-lowest/40 rounded-lg mb-0.5 shrink-0 transition-colors relative group outline-none cursor-pointer"
+          aria-label="Open new tab"
+          title="New tab"
+          className="h-8 w-8 flex items-center justify-center text-outline hover:text-on-surface hover:bg-surface-container-lowest/40 rounded-lg mb-0.5 shrink-0 transition-colors relative group outline-none cursor-pointer focus:ring-2 focus:ring-primary/30"
         >
           <PlusCircle className="w-3.5 h-3.5" />
           
@@ -350,13 +357,13 @@ export default function TitleBar() {
       </div>
 
       {/* Right: Compact search & window controls */}
-      <div className="flex items-center gap-2 shrink-0 no-drag pl-3 h-full">
+      <div className="flex items-center gap-2 shrink-0 no-drag pl-3 h-full ui-invisible-border">
         {/* Obsidian-Style Theme Mode Toggle */}
         <button
           onClick={handleThemeToggle}
-          className="h-8 w-8 flex items-center justify-center text-outline hover:text-on-surface hover:bg-surface-container-lowest/40 rounded-lg shrink-0 transition-all duration-200 outline-none cursor-pointer relative group"
+          className="h-8 w-8 flex items-center justify-center text-outline hover:text-on-surface hover:bg-surface-container-lowest/40 rounded-lg shrink-0 transition-all duration-200 outline-none cursor-pointer relative group focus:ring-2 focus:ring-primary/30"
           title={isDark ? 'Switch to Day Light Mode' : 'Switch to Dark Mode'}
-          aria-label="Toggle theme mode"
+          aria-label={isDark ? 'Switch to Day Light Mode' : 'Switch to Dark Mode'}
         >
           {isDark ? (
             <Sun className="w-3.5 h-3.5 transition-transform duration-200 group-hover:rotate-45" />
@@ -369,8 +376,9 @@ export default function TitleBar() {
         <div className="relative group">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-outline w-3 h-3 group-focus-within:text-primary transition-colors" />
           <input
-            className="bg-surface-container-low border border-outline-variant/10 rounded-full py-1 pl-7 pr-3 text-[10px] focus:ring-1.5 focus:ring-primary/20 focus:outline-none transition-all placeholder:text-outline/70 focus:bg-surface-container-lowest text-on-surface w-24 focus:w-44 duration-300"
+            className="bg-surface-container-low border border-outline-variant/10 rounded-full py-1 pl-7 pr-3 text-[10px] focus:ring-1.5 focus:ring-primary/20 focus:outline-none transition-all placeholder:text-outline/70 focus:bg-surface-container-lowest text-on-surface w-20 sm:w-24 focus:w-44 duration-300"
             placeholder="Search..."
+            aria-label="Search Vault Materials"
             type="text"
             value={vaultSearch}
             onChange={e => {

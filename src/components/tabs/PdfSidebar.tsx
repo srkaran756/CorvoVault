@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { BookOpen, Bookmark, Trash2, Loader2, PanelLeftClose } from 'lucide-react';
+import { BookOpen, Bookmark, Trash2, Loader2, PanelLeftClose, StickyNote } from 'lucide-react';
 import { OutlineItem } from '../../hooks/usePdfDocument';
 import { StudyBookmark } from '../../hooks/usePdfBookmarks';
 
@@ -21,6 +21,8 @@ interface PdfSidebarProps {
   handleAddBookmark: (page: number) => void;
   handleDeleteBookmark: (id: string) => void;
   studyBookmarks: StudyBookmark[];
+  onExportAnnotations?: () => void;
+  isExportingNotes?: boolean;
 }
 
 export default function PdfSidebar({
@@ -41,6 +43,8 @@ export default function PdfSidebar({
   handleAddBookmark,
   handleDeleteBookmark,
   studyBookmarks,
+  onExportAnnotations,
+  isExportingNotes = false,
 }: PdfSidebarProps) {
   
   const navigateToDestination = async (dest: any) => {
@@ -189,6 +193,25 @@ export default function PdfSidebar({
           </div>
         )}
       </div>
+
+      {/* Footer export button */}
+      {onExportAnnotations && (
+        <div className="p-2 border-t border-outline-variant/10 bg-surface shrink-0">
+          <button
+            onClick={onExportAnnotations}
+            disabled={isExportingNotes}
+            className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-primary/10 hover:bg-primary/15 text-primary border border-primary/20 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer disabled:opacity-50"
+            title="Export all PDF Annotations & Highlights into a Markdown Note"
+          >
+            {isExportingNotes ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <StickyNote className="w-3.5 h-3.5" />
+            )}
+            <span>Export Notes</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

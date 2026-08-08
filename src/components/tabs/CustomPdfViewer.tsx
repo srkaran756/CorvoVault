@@ -342,6 +342,9 @@ const CustomPdfViewer = React.forwardRef<any, CustomPdfViewerProps>(function Cus
       const canvas = pageWrapper.querySelector('canvas');
       if (!canvas) return null;
       return canvas.toDataURL('image/png');
+    },
+    jumpToPage: (pageNum: number) => {
+      jumpToPage(pageNum);
     }
   }));
 
@@ -412,9 +415,21 @@ const CustomPdfViewer = React.forwardRef<any, CustomPdfViewerProps>(function Cus
     annotationCommand,
     setAnnotationCommand,
     clearPageAnnotations,
-    runAnnotationCommand
+    runAnnotationCommand,
+    isExportingNotes,
+    handleExportAnnotations,
   } = usePdfAnnotations(material.id, currentPage);
   const [activeSelectionPage, setActiveSelectionPage] = useState<number | null>(null);
+
+  const triggerExportAnnotations = async () => {
+    const res = await handleExportAnnotations(material.title || 'Document');
+    if (res.success) {
+      setNotesCollapsed(false);
+      window.dispatchEvent(new CustomEvent('material-note:refresh', { detail: { materialId: material.id } }));
+    } else {
+      alert(res.message || 'Could not export PDF annotations.');
+    }
+  };
 
   // AI state
   const [isAiPaneOpen, setIsAiPaneOpen] = useState(false);
@@ -1082,6 +1097,21 @@ const CustomPdfViewer = React.forwardRef<any, CustomPdfViewerProps>(function Cus
     }
   }, [numPages, scrollRoot, material.id, setActiveSelectionPage]);
 
+  // Listen to global page jump events for this material
+  useEffect(() => {
+    const handleJumpEvent = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (
+        (!customEvent.detail?.materialId || customEvent.detail.materialId === material.id) &&
+        customEvent.detail?.page
+      ) {
+        jumpToPage(customEvent.detail.page);
+      }
+    };
+    window.addEventListener('corvovault:pdf-jump-page', handleJumpEvent);
+    return () => window.removeEventListener('corvovault:pdf-jump-page', handleJumpEvent);
+  }, [material.id, jumpToPage]);
+
 
 
 
@@ -1148,6 +1178,8 @@ const CustomPdfViewer = React.forwardRef<any, CustomPdfViewerProps>(function Cus
           handleAddBookmark={handleAddBookmark}
           handleDeleteBookmark={handleDeleteBookmark}
           studyBookmarks={studyBookmarks}
+          onExportAnnotations={triggerExportAnnotations}
+          isExportingNotes={isExportingNotes}
         />
       )}
 
@@ -1188,6 +1220,8 @@ const CustomPdfViewer = React.forwardRef<any, CustomPdfViewerProps>(function Cus
             ingestionStatus={ingestionStatus}
             workspaceMode={getActiveWorkspaceMode()}
             onSetWorkspaceMode={handleSetWorkspaceMode}
+            onExportAnnotations={triggerExportAnnotations}
+            isExportingNotes={isExportingNotes}
           />
 
           {/* ── CROP MODE OVERLAY (rendered outside scroll+overflow containers) ── */}
